@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配送路线分析平台 - Flow Map · 碳排放 · 数据分析</title>
+<style>{{ML_CSS}}</style>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;overflow:hidden}
+#app{display:flex;height:100vh;width:100vw}
+#sidebar{width:64px;min-width:64px;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;padding-top:12px;z-index:2000;gap:4px}
+#sidebar .nav-btn{width:48px;height:48px;border-radius:12px;border:none;background:transparent;color:#8892b0;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;gap:2px;transition:all 0.2s}
+#sidebar .nav-btn:hover{background:#16213e;color:#ccd6f6}
+#sidebar .nav-btn.active{background:#0f3460;color:#64ffda}
+#sidebar .nav-btn .icon{font-size:18px}
+#main{flex:1;position:relative;overflow:hidden}
+.panel{position:absolute;top:0;left:0;width:100%;height:100%;display:none}
+.panel.active{display:flex}
+#map{width:100%;height:100%;position:absolute;top:0;left:0}
+#panel-map{display:flex}
+#map-overlay{position:absolute;top:10px;right:10px;z-index:1000;background:rgba(255,255,255,0.95);border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.15);width:320px;max-height:calc(100vh - 20px);display:flex;flex-direction:column;overflow:hidden}
+#map-overlay .header{padding:10px 14px;border-bottom:1px solid #eee;background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;font-size:13px;font-weight:700;text-align:center;flex-shrink:0}
+#map-overlay .body{padding:8px 10px;overflow-y:auto;flex:1}
+.section{margin-bottom:8px}
+.section-label{font-size:10px;font-weight:700;color:#888;margin-bottom:4px;text-transform:uppercase}
+select{width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid #ddd;font-size:12px;background:#fff;cursor:pointer;font-family:inherit}
+select:focus{border-color:#1a73e8;outline:none}
+.route-list{max-height:220px;overflow-y:auto}
+.route-item{display:flex;align-items:center;padding:5px 6px;margin:1px 0;border-radius:6px;cursor:pointer;font-size:11px;gap:6px}
+.route-item:hover{background:#f0f4ff}
+.route-item input[type=checkbox]{cursor:pointer;width:14px;height:14px;accent-color:#1a73e8;flex-shrink:0}
+.route-color{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.route-info{flex:1;min-width:0}
+.route-name{font-weight:600;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.route-stats{color:#999;font-size:10px}
+.btn-row{display:flex;gap:4px}
+.btn-row button{flex:1;padding:5px;font-size:10px;border-radius:5px;border:1px solid #ddd;cursor:pointer;font-family:inherit;background:#fff}
+.btn-primary{background:#1a73e8!important;color:white!important;border-color:#1a73e8!important;font-weight:600}
+#stats-bar{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:1000;background:rgba(0,0,0,0.78);color:white;border-radius:24px;padding:6px 18px;font-size:10px;display:flex;gap:18px;pointer-events:none}
+.stat-value{font-weight:700;font-size:15px}
+.stat-label{font-size:9px;opacity:0.7}
+.legend{background:rgba(255,255,255,0.92);padding:6px 10px;border-radius:6px;font-size:10px;line-height:1.6;box-shadow:0 2px 8px rgba(0,0,0,0.12);position:absolute;bottom:30px;left:10px;z-index:1000}
+.dashboard{flex:1;overflow-y:auto;padding:20px;background:#f0f2f5}
+.dashboard h2{font-size:20px;color:#1a1a2e;margin-bottom:4px}
+.dashboard .subtitle{font-size:13px;color:#888;margin-bottom:20px}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px}
+.metric-card{background:white;border-radius:12px;padding:16px 20px;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+.metric-card .label{font-size:11px;color:#888;margin-bottom:4px;text-transform:uppercase}
+.metric-card .value{font-size:28px;font-weight:700;color:#1a1a2e}
+.metric-card .unit{font-size:13px;color:#666;font-weight:400}
+.metric-card .sub{font-size:11px;color:#4caf50;margin-top:4px}
+.metric-card.warn .value{color:#e65100}
+.metric-card.good .value{color:#2e7d32}
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+.chart-card{background:white;border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+.chart-card h3{font-size:14px;color:#333;margin-bottom:12px}
+.chart-card canvas{width:100%!important;max-height:300px}
+.chart-full{grid-column:1/-1}
+.chart-full canvas{max-height:350px}
+.data-table{width:100%;border-collapse:collapse;font-size:12px;background:white;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+.data-table th{background:#1a1a2e;color:white;padding:10px 12px;text-align:left;font-weight:600;font-size:11px;text-transform:uppercase}
+.data-table td{padding:8px 12px;border-bottom:1px solid #f0f0f0}
+.data-table tr:hover{background:#f8f9ff}
+.data-table .highlight{color:#1a73e8;font-weight:600}
+#steps{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3000;background:white;padding:14px 24px;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,0.18);font-size:13px;min-width:260px;text-align:center}
+#steps .title{font-weight:700;font-size:14px;margin-bottom:6px}
+#steps .list{text-align:left;font-size:11px;line-height:2;color:#666}
+#steps .ok{color:#2e7d32}
+#steps .err{color:#d32f2f}
+.eco-tip{background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border-radius:12px;padding:16px 20px;margin-top:20px;font-size:12px;line-height:1.8}
+.eco-tip b{color:#2e7d32}
+/* Data Center */
+.upload-zone{border:2px dashed #ccc;border-radius:12px;padding:30px;text-align:center;transition:all 0.3s;background:#fafafa;cursor:pointer;margin-bottom:14px}
+.upload-zone:hover,.upload-zone.dragover{border-color:#1a73e8;background:#f0f4ff}
+.upload-zone .icon{font-size:40px;margin-bottom:8px}
+.upload-zone .text{font-size:13px;color:#666}
+.upload-zone .hint{font-size:11px;color:#999;margin-top:4px}
+.upload-zone input[type=file]{display:none}
+.preview-box{background:#f8f9fa;border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;max-height:300px;overflow-y:auto;display:none}
+.preview-box table{width:100%;border-collapse:collapse;font-size:11px}
+.preview-box th{background:#e8e8e8;padding:6px 8px;text-align:left}
+.preview-box td{padding:4px 8px;border-bottom:1px solid #eee}
+.cmd-box{background:#1a1a2e;color:#64ffda;padding:12px 16px;border-radius:8px;font-family:'SF Mono','Monaco','Menlo',monospace;font-size:12px;margin-bottom:14px;position:relative}
+.cmd-box .copy-btn{position:absolute;top:8px;right:8px;background:#333;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer}
+.dl-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.dl-card{background:#f8f9fa;border-radius:10px;padding:14px;text-align:center;transition:all 0.2s;cursor:pointer;text-decoration:none;color:inherit;border:1px solid transparent}
+.dl-card:hover{background:#f0f4ff;border-color:#1a73e8}
+.dl-card .icon{font-size:28px;margin-bottom:6px}
+.dl-card .name{font-size:12px;font-weight:600}
+.dl-card .size{font-size:10px;color:#999}
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.status-item{background:#f8f9fa;border-radius:8px;padding:10px 12px}
+.status-item .val{font-size:18px;font-weight:700;color:#1a1a2e}
+.status-item .lbl{font-size:10px;color:#888}
+
+@media(max-width:768px){#sidebar{width:48px;min-width:48px}#sidebar .nav-btn{width:38px;height:38px;font-size:8px;border-radius:8px}#sidebar .nav-btn .icon{font-size:16px}#map-overlay{width:calc(100vw-60px);max-height:40vh}.chart-row{grid-template-columns:1fr}.metric-grid{grid-template-columns:repeat(2,1fr)}.dl-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="sidebar">
+  <button class="nav-btn active" data-panel="map" title="路线地图"><span class="icon">&#x1F5FA;</span>地图</button>
+  <button class="nav-btn" data-panel="carbon" title="碳排放"><span class="icon">&#x1F33F;</span>碳排放</button>
+  <button class="nav-btn" data-panel="analysis" title="数据分析"><span class="icon">&#x1F4CA;</span>分析</button>
+  <button class="nav-btn" data-panel="datacenter" title="数据中心"><span class="icon">&#x1F4C2;</span>数据</button>
+  <div style="flex:1"></div>
+  <button class="nav-btn" onclick="doLogout()" title="退出登录" style="margin-bottom:12px;background:rgba(229,57,53,0.15);color:#ef5350"><span class="icon">&#x1F6AA;</span>退出</button>
+</div>
+<div id="main">
+  <div id="panel-map" class="panel active">
+    <div id="map"></div>
+    <div id="steps"><div class="title" id="step-title">正在初始化...</div><div class="list" id="step-list"><div id="s1">1. 地图引擎 (MapLibre GL JS)...</div><div id="s2">2. 路线数据 (外部文件)...</div><div id="s3">3. 创建地图与路线...</div><div id="s4">4. 完成初始化...</div></div></div>
+    <div id="map-overlay"><div class="header">配送路线 Flow Map</div><div class="body"><div class="section"><div class="section-label">配送日期</div><select id="date-select"></select></div><div class="section"><div class="section-label">车辆/路线</div><div class="btn-row" style="margin-bottom:4px"><button class="btn-primary" id="btn-all">全选</button><button id="btn-none">全不选</button></div><div class="route-list" id="route-list"></div></div><div class="section"><div class="section-label">显示设置</div><label style="display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:3px"><input type="checkbox" id="show-return" checked onchange="refreshMap()"> 返程路线</label></div></div></div>
+    <div id="stats-bar"><div class="stat-item"><div class="stat-value" id="sv-veh">-</div><div class="stat-label">车辆</div></div><div class="stat-item"><div class="stat-value" id="sv-stop">-</div><div class="stat-label">配送点</div></div><div class="stat-item"><div class="stat-value" id="sv-pkg">-</div><div class="stat-label">货量</div></div><div class="stat-item"><div class="stat-value" id="sv-dist">-</div><div class="stat-label">距离km</div></div></div>
+    <div class="legend"><b>图例</b><br/><span style="color:#000;">●</span> 仓库 <span style="color:#e53935;">——</span> 往程 <span style="border-bottom:1px dashed #999;">- -</span> 返程<br/><span style="color:#4caf50;">●</span> 首站 <span style="color:#ff9800;">●</span> 末站 ●≈货量</div>
+  </div>
+  <div id="panel-carbon" class="panel"><div class="dashboard">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div><h2 style="margin:0">碳排放分析仪表盘</h2><div class="subtitle" style="margin-bottom:0">全配送周期碳排放评估与减排分析 · 排放系数: 180 g CO₂/km · 道路系数: 1.35</div></div>
+      <div style="font-size:36px;opacity:0.3">&#x1F30D;</div>
+    </div>
+    <div class="metric-grid" id="carbon-metrics"></div>
+    <div class="chart-row"><div class="chart-card chart-full"><h3>每日碳排放趋势 (kg CO₂)</h3><canvas id="chart-daily-co2"></canvas></div></div>
+    <div class="chart-row">
+      <div class="chart-card"><h3>车辆碳排放排名 (Top 10)</h3><canvas id="chart-vehicle-co2"></canvas></div>
+      <div class="chart-card"><h3>排放来源分布</h3><canvas id="chart-emission-pie"></canvas></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card chart-full"><h3>每日距离与排放对比</h3><canvas id="chart-dist-co2-combo"></canvas></div>
+    </div>
+    <div class="eco-tip"><b>减碳建议</b><br/>• 总排放量: <b id="eco-total-co2">-</b>，相当于 <b id="eco-trees">-</b> 棵树一年的碳吸收量<br/>• 优化建议: 合并相邻配送点可减少 <b>5-15%</b> 行驶距离 · 优化路线顺序可减少 <b>3-8%</b><br/>• 电动车辆替换: 若全部替换为电动车，可减少 <b>60-80%</b> 碳排放<br/>• 平均每车每日排放: <b id="eco-avg-co2">-</b></div>
+  </div></div>
+  <div id="panel-analysis" class="panel"><div class="dashboard">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div><h2 style="margin:0">数据分析面板</h2><div class="subtitle" id="analysis-subtitle" style="margin-bottom:0">全配送周期运营数据分析</div></div>
+      <div style="font-size:36px;opacity:0.3">&#x1F4C8;</div>
+    </div>
+    <div class="metric-grid" id="analysis-metrics"></div>
+    <div class="chart-row"><div class="chart-card chart-full"><h3>每日配送量与车辆使用</h3><canvas id="chart-daily-stats"></canvas></div></div>
+    <div class="chart-row">
+      <div class="chart-card"><h3>车辆配送点数排名 (Top 12)</h3><canvas id="chart-vehicle-stops"></canvas></div>
+      <div class="chart-card"><h3>每日总货量趋势</h3><canvas id="chart-daily-parcels"></canvas></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card chart-full"><h3>车辆综合对比 (配送点 · 货量 · 距离)</h3><canvas id="chart-vehicle-combo"></canvas></div>
+    </div>
+    <div class="chart-row"><div class="chart-card chart-full"><h3>每日运营汇总表</h3><div style="overflow-x:auto"><table class="data-table" id="daily-table"><thead><tr><th>日期</th><th>路线数</th><th>配送点</th><th>总货量</th><th>距离(km)</th><th>平均点间距(km)</th><th>CO₂(kg)</th></tr></thead><tbody></tbody></table></div></div></div>
+  </div></div>
+
+  <!-- 数据中心面板 -->
+  <div id="panel-datacenter" class="panel"><div class="dashboard"><h2>数据中心</h2><div class="subtitle">数据上传 · 模板下载 · 分析结果导出</div>
+
+    <!-- 当前数据状态 -->
+    <div class="section-label" style="margin-bottom:8px">当前数据状态</div>
+    <div class="status-grid" id="data-status"></div>
+
+    <!-- 数据上传 -->
+    <div class="section-label" style="margin-bottom:8px">数据上传 (选择 .xls 文件预览)</div>
+    <div class="upload-zone" id="upload-zone">
+      <div class="icon">&#x1F4E4;</div>
+      <div class="text">拖拽 .xls 文件到此处，或点击选择</div>
+      <div class="hint">支持 .xls / .xlsx 格式 · 预览后执行优化命令</div>
+      <input type="file" id="file-input" accept=".xls,.xlsx">
+    </div>
+    <div class="preview-box" id="preview-box"></div>
+
+    <!-- 执行命令 -->
+    <div class="section-label" style="margin-bottom:8px">执行优化命令</div>
+    <div class="cmd-box">
+      <button class="copy-btn" onclick="copyCmd()">复制</button>
+      <code id="update-cmd">cd backend && python3 delivery_optimizer.py "新文件.xls"</code>
+    </div>
+
+    <!-- 模板下载 -->
+    <div class="section-label" style="margin-bottom:8px">下载</div>
+    <div class="dl-grid">
+      <a class="dl-card" href="backend/delivery_plan.xlsx" download>
+        <div class="icon">&#x1F4CA;</div><div class="name">配送计划 Excel</div><div class="size">delivery_plan.xlsx</div>
+      </a>
+      <a class="dl-card" href="backend/route_data.json" download>
+        <div class="icon">&#x1F4BE;</div><div class="name">路线数据 JSON</div><div class="size">route_data.json</div>
+      </a>
+      <a class="dl-card" href="backend/route_data.js" download>
+        <div class="icon">&#x1F4C4;</div><div class="name">路线数据 JS</div><div class="size">route_data.js</div>
+      </a>
+      <a class="dl-card" href="backend/template.xlsx" download>
+        <div class="icon">&#x1F4CB;</div><div class="name">空白模板下载</div><div class="size">template.xlsx (6个工作表)</div>
+      </a>
+    </div>
+  </div></div>
+
+</div>
+</div>
+
+<!-- MapLibre GL JS (内嵌) -->
+<script>{{ML_JS}}</script>
+
+<!-- Chart.js (内嵌) -->
+<script>{{CHART_JS}}</script>
+
+<!-- SheetJS (内嵌，用于浏览器端读取Excel) -->
+<script>{{SHEETJS}}</script>
+
+<!-- 路线数据 (外部文件，更新数据只需重新生成此文件) -->
+<script src="backend/route_data.js"></script>
+
+<!-- 应用逻辑 -->
+<script>
+(function(){
+var $=function(id){return document.getElementById(id);};
+var EMISSION_FACTOR = 180; // g CO2/km
+var ROAD_FACTOR = 1.35;
+
+// 登录检查
+if (!sessionStorage.getItem('dispatch_logged_in') && !localStorage.getItem('dispatch_remember')) {
+  window.location.replace('login.html');
+}
+
+function doLogout(){
+  sessionStorage.removeItem('dispatch_logged_in');
+  localStorage.removeItem('dispatch_remember');
+  window.location.replace('login.html');
+}
+
+// 检查数据是否加载 (5秒超时)
+var _checkStart=Date.now();
+function checkData(callback){
+  if(typeof ROUTE_DATA !== 'undefined'){
+    callback();
+  }else if(Date.now()-_checkStart>5000){
+    showErr('数据加载超时：route_data.js 未能加载。请确认已运行 python3 backend/server.py 并通过 http://localhost:8765 访问');
+    $('steps').style.display='block';
+  }else{
+    setTimeout(function(){checkData(callback);}, 100);
+  }
+}
+
+function stepOk(n){var el=$('s'+n);if(el){el.className='ok';el.textContent=el.textContent.replace('...',' ✓');}}
+function stepErr(n,msg){var el=$('s'+n);if(el){el.className='err';el.textContent=el.textContent.replace('...',' ✗')+' - '+msg;}}
+function showErr(msg){var t=$('step-title');t.textContent='初始化失败';t.style.color='#d32f2f';$('step-list').innerHTML+='<div style="color:#d32f2f;margin-top:6px;">'+msg+'</div>';}
+function hideSteps(){var el=$('steps');if(el)el.style.display='none';}
+
+stepOk(1);
+
+checkData(function(){
+stepOk(2);
+
+// Navigation
+document.querySelectorAll('#sidebar .nav-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    document.querySelectorAll('#sidebar .nav-btn').forEach(function(b){b.classList.remove('active');});
+    this.classList.add('active');
+    var panelId = 'panel-' + this.dataset.panel;
+    document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
+    $(panelId).classList.add('active');
+    if(this.dataset.panel==='map' && typeof map!=='undefined' && map){setTimeout(function(){map.resize();},100);}
+    if(this.dataset.panel==='carbon' && !this._init){this._init=1;setTimeout(initCarbonDashboard,100);}
+    if(this.dataset.panel==='analysis' && !this._init){this._init=1;setTimeout(initAnalysisPanel,100);}
+    if(this.dataset.panel==='datacenter' && !this._init){this._init=1;setTimeout(initDataCenter,100);}
+  });
+});
+
+// ===== MAP =====
+var DEPOT=ROUTE_DATA.depot, map, currentDate=null, visibleSet={};
+var COLORS=['#e53935','#1e88e5','#43a047','#fb8c00','#8e24aa','#00acc1','#d81b60','#3949ab','#7cb342','#f4511e','#6d4c41','#00897b','#c0ca33','#5e35b1','#039be5','#ff7043','#33691e','#b71c1c','#00695c','#e65100','#1565c0','#2e7d32','#ad1457','#283593','#4e342e','#558b2f'];
+function getColor(i){return COLORS[i%COLORS.length];}
+
+function haversine(lat1,lon1,lat2,lon2){
+  var r=0.0174533,a=0.5-Math.cos((lat2-lat1)*r)/2+Math.cos(lat1*r)*Math.cos(lat2*r)*(1-Math.cos((lon2-lon1)*r))/2;
+  return 12742*Math.asin(Math.sqrt(a))*ROAD_FACTOR;
+}
+
+var routeSources=[], routeLayers=[], markerSources=[], markerLayers=[];
+
+try{
+map = new maplibregl.Map({
+  container:'map', style:'https://tiles.openfreemap.org/styles/liberty',
+  center:[130.75,32.81], zoom:12, attributionControl:false
+});
+map.addControl(new maplibregl.AttributionControl({compact:true}));
+map.addControl(new maplibregl.NavigationControl(),'top-left');
+}catch(e){stepErr(3,e.message);showErr('地图创建失败: '+e.message);}
+
+function buildRouteList(){
+  var list=$('route-list');list.innerHTML='';
+  var routes=ROUTE_DATA.routes_by_date[currentDate]||{};
+  var entries=Object.keys(routes).sort(function(a,b){return routes[b].stop_count-routes[a].stop_count;});
+  entries.forEach(function(code,idx){
+    var data=routes[code],div=document.createElement('div');div.className='route-item';
+    var cb=document.createElement('input');cb.type='checkbox';cb.checked=!!visibleSet[code];
+    (function(c){cb.addEventListener('change',function(){toggleRoute(c);});})(code);
+    var dot=document.createElement('div');dot.className='route-color';dot.style.background=getColor(idx);
+    var info=document.createElement('div');info.className='route-info';
+    info.innerHTML='<div class="route-name">'+(data.vehicle_name||code)+'</div><div class="route-stats">'+data.stop_count+'点 · '+data.total_parcels+'件 · '+(data.last_depart||'-')+'</div>';
+    div.appendChild(cb);div.appendChild(dot);div.appendChild(info);
+    div.addEventListener('click',function(e){if(e.target.tagName!=='INPUT'){cb.checked=!cb.checked;toggleRoute(code);}});
+    list.appendChild(div);
+  });
+}
+
+function toggleRoute(code){visibleSet[code]=!visibleSet[code];refreshMap();updateStats();}
+$('btn-all').addEventListener('click',function(){
+  var routes=ROUTE_DATA.routes_by_date[currentDate]||{};
+  Object.keys(routes).forEach(function(c){visibleSet[c]=true;});
+  document.querySelectorAll('#route-list input').forEach(function(cb){cb.checked=true;});
+  refreshMap();updateStats();
+});
+$('btn-none').addEventListener('click',function(){
+  Object.keys(visibleSet).forEach(function(c){visibleSet[c]=false;});
+  document.querySelectorAll('#route-list input').forEach(function(cb){cb.checked=false;});
+  refreshMap();updateStats();
+});
+
+function refreshMap(){
+  if(!map||!map.loaded()){if(map)map.once('load',refreshMap);return;}
+  routeLayers.forEach(function(id){try{map.removeLayer(id);}catch(e){}});
+  markerLayers.forEach(function(id){try{map.removeLayer(id);}catch(e){}});
+  routeSources.forEach(function(id){try{map.removeSource(id);}catch(e){}});
+  markerSources.forEach(function(id){try{map.removeSource(id);}catch(e){}});
+  routeLayers=[];markerLayers=[];routeSources=[];markerSources=[];
+
+  var showReturn=$('show-return').checked;
+  var routes=ROUTE_DATA.routes_by_date[currentDate]||{};
+  var entries=Object.keys(routes).sort(function(a,b){return routes[b].stop_count-routes[a].stop_count;});
+  var colorIdx=0;
+
+  entries.forEach(function(code){
+    if(!visibleSet[code])return;
+    var data=routes[code],color=getColor(colorIdx++),stops=data.stops;
+    if(!stops.length)return;
+    var coords=[[DEPOT.lon,DEPOT.lat]];
+    stops.forEach(function(s){coords.push([s.lon,s.lat]);});
+
+    var sourceId='r-'+code, layerId='rl-'+code;
+    map.addSource(sourceId,{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:coords}}});
+    map.addLayer({id:layerId,type:'line',source:sourceId,paint:{'line-color':color,'line-width':2.5,'line-opacity':0.85}});
+    routeSources.push(sourceId);routeLayers.push(layerId);
+
+    if(showReturn){
+      var retId='ret-'+code, retLyr='retl-'+code;
+      map.addSource(retId,{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:[[stops[stops.length-1].lon,stops[stops.length-1].lat],[DEPOT.lon,DEPOT.lat]]}}});
+      map.addLayer({id:retLyr,type:'line',source:retId,paint:{'line-color':color,'line-width':1.5,'line-opacity':0.4,'line-dasharray':[3,2]}});
+      routeSources.push(retId);routeLayers.push(retLyr);
+    }
+
+    for(var i=0;i<coords.length-1;i++){
+      var mid=[(coords[i][0]+coords[i+1][0])/2,(coords[i][1]+coords[i+1][1])/2];
+      var arrowId='a-'+code+'-'+i, arrowLyr='al-'+code+'-'+i;
+      map.addSource(arrowId,{type:'geojson',data:{type:'Feature',geometry:{type:'Point',coordinates:mid}}});
+      map.addLayer({id:arrowLyr,type:'circle',source:arrowId,paint:{'circle-radius':3,'circle-color':color,'circle-opacity':0.7,'circle-stroke-color':'#fff','circle-stroke-width':1}});
+      routeSources.push(arrowId);routeLayers.push(arrowLyr);
+    }
+
+    stops.forEach(function(s,idx){
+      var r=Math.max(3,Math.min(10,Math.sqrt(s.parcels)*1.2));
+      var sid='s-'+code+'-'+idx, slid='sl-'+code+'-'+idx;
+      map.addSource(sid,{type:'geojson',data:{type:'Feature',geometry:{type:'Point',coordinates:[s.lon,s.lat]},properties:{name:s.name||s.id,idx:idx+1,parcels:s.parcels,arrive:s.arrive,depart:s.depart,svc:s.service_min,travel:s.travel_min,address:s.address||'',vehicle:data.vehicle_name||code}}});
+      map.addLayer({id:slid,type:'circle',source:sid,paint:{'circle-radius':r,'circle-color':color,'circle-opacity':0.85,'circle-stroke-color':'#fff','circle-stroke-width':1.5}});
+      markerSources.push(sid);markerLayers.push(slid);
+      map.on('click',slid,function(e){
+        var p=e.features[0].properties;
+        new maplibregl.Popup().setLngLat(e.lngLat).setHTML('<b>'+p.idx+'. '+p.name+'</b><br/>货量:<b>'+p.parcels+'</b>件<br/>到达/出发:'+p.arrive+'/'+p.depart+'<br/>作业:'+p.svc+'分 | 移动:'+p.travel+'分'+(p.address?'<br/><span style="font-size:10px;color:#888">'+p.address+'</span>':'')+'<br/><span style="font-size:10px;color:#1a73e8">'+p.vehicle+'</span>').addTo(map);
+      });
+      map.on('mouseenter',slid,function(){map.getCanvas().style.cursor='pointer';});
+      map.on('mouseleave',slid,function(){map.getCanvas().style.cursor='';});
+    });
+
+    if(stops.length>0){
+      var startId='st-'+code, startLyr='stl-'+code;
+      map.addSource(startId,{type:'geojson',data:{type:'Feature',geometry:{type:'Point',coordinates:[stops[0].lon,stops[0].lat]}}});
+      map.addLayer({id:startLyr,type:'circle',source:startId,paint:{'circle-radius':5,'circle-color':'#4caf50','circle-stroke-color':'#fff','circle-stroke-width':2}});
+      markerSources.push(startId);markerLayers.push(startLyr);
+      var endId='en-'+code, endLyr='enl-'+code;
+      map.addSource(endId,{type:'geojson',data:{type:'Feature',geometry:{type:'Point',coordinates:[stops[stops.length-1].lon,stops[stops.length-1].lat]}}});
+      map.addLayer({id:endLyr,type:'circle',source:endId,paint:{'circle-radius':5,'circle-color':'#ff9800','circle-stroke-color':'#fff','circle-stroke-width':2}});
+      markerSources.push(endId);markerLayers.push(endLyr);
+    }
+  });
+}
+
+function updateStats(){
+  var routes=ROUTE_DATA.routes_by_date[currentDate]||{}, stops=0,parcels=0,dist=0,n=0;
+  Object.keys(routes).forEach(function(code){
+    if(!visibleSet[code])return;n++;var data=routes[code];
+    stops+=data.stop_count;parcels+=data.total_parcels;
+    var s=data.stops,d=haversine(DEPOT.lat,DEPOT.lon,s[0].lat,s[0].lon);
+    for(var i=0;i<s.length-1;i++)d+=haversine(s[i].lat,s[i].lon,s[i+1].lat,s[i+1].lon);
+    d+=haversine(s[s.length-1].lat,s[s.length-1].lon,DEPOT.lat,DEPOT.lon);dist+=d;
+  });
+  $('sv-veh').textContent=n;$('sv-stop').textContent=stops;
+  $('sv-pkg').textContent=parcels.toLocaleString();$('sv-dist').textContent=dist.toFixed(0);
+}
+
+function onDateChange(){
+  currentDate=$('date-select').value;
+  var routes=ROUTE_DATA.routes_by_date[currentDate]||{};
+  visibleSet={};Object.keys(routes).forEach(function(c){visibleSet[c]=true;});
+  buildRouteList();if(map.loaded())refreshMap();else map.once('load',refreshMap);updateStats();
+}
+
+var dates=Object.keys(ROUTE_DATA.routes_by_date).sort();
+var sel=$('date-select');
+dates.forEach(function(d){var o=document.createElement('option');o.value=d;o.textContent=d;sel.appendChild(o);});
+
+function addDepotMarker(){
+  map.addSource('depot',{type:'geojson',data:{type:'Feature',geometry:{type:'Point',coordinates:[DEPOT.lon,DEPOT.lat]}}});
+  map.addLayer({id:'depot-outer',type:'circle',source:'depot',paint:{'circle-radius':12,'circle-color':'#000','circle-opacity':0.15}});
+  map.addLayer({id:'depot-inner',type:'circle',source:'depot',paint:{'circle-radius':7,'circle-color':'#000','circle-stroke-color':'#fff','circle-stroke-width':2.5}});
+}
+
+map.once('load',function(){
+  try{
+    addDepotMarker();sel.value=dates[0];onDateChange();
+    var allLats=[DEPOT.lat],allLons=[DEPOT.lon];
+    var routes0=ROUTE_DATA.routes_by_date[dates[0]]||{};
+    Object.keys(routes0).forEach(function(code){routes0[code].stops.forEach(function(s){allLats.push(s.lat);allLons.push(s.lon);});});
+    if(allLats.length>2){
+      var amin=function(a){var m=a[0];for(var i=1;i<a.length;i++){if(a[i]<m)m=a[i];}return m;};
+      var amax=function(a){var m=a[0];for(var i=1;i<a.length;i++){if(a[i]>m)m=a[i];}return m;};
+      map.fitBounds([[amin(allLons),amin(allLats)],[amax(allLons),amax(allLats)]],{padding:30});
+    }
+    stepOk(3);stepOk(4);
+    $('step-title').textContent='加载完成';$('step-title').style.color='#2e7d32';
+    var totalRoutes=0;Object.keys(ROUTE_DATA.routes_by_date).forEach(function(d){totalRoutes+=Object.keys(ROUTE_DATA.routes_by_date[d]).length;});
+    $('step-list').innerHTML+='<div style="color:#2e7d32;margin-top:6px;font-weight:600;">'+dates.length+'天 · '+totalRoutes+'条路线</div>';
+    setTimeout(hideSteps,1000);
+  }catch(e){stepErr(3,e.message||'未知错误');showErr('初始化失败: '+(e.message||''));}
+});
+
+// ===== CARBON DASHBOARD (JS实时计算) =====
+function computeCarbonData(){
+  var daily={}, vehicles={};
+  Object.keys(ROUTE_DATA.routes_by_date).forEach(function(dateStr){
+    var routes=ROUTE_DATA.routes_by_date[dateStr], dayDist=0;
+    Object.keys(routes).forEach(function(code){
+      var data=routes[code], stops=data.stops;
+      if(!stops.length)return;
+      var d=haversine(DEPOT.lat,DEPOT.lon,stops[0].lat,stops[0].lon);
+      for(var i=0;i<stops.length-1;i++)d+=haversine(stops[i].lat,stops[i].lon,stops[i+1].lat,stops[i+1].lon);
+      d+=haversine(stops[stops.length-1].lat,stops[stops.length-1].lon,DEPOT.lat,DEPOT.lon);
+      dayDist+=d;var co2=d*EMISSION_FACTOR/1000;
+      if(!vehicles[code])vehicles[code]={name:data.vehicle_name||code,dist:0,co2:0,days:0};
+      vehicles[code].dist+=d;vehicles[code].co2+=co2;vehicles[code].days++;
+    });
+    daily[dateStr]={dist:Math.round(dayDist*10)/10,co2:Math.round(dayDist*EMISSION_FACTOR/10)/100};
+  });
+  var totalDist=0,totalCo2=0;
+  Object.values(daily).forEach(function(d){totalDist+=d.dist;totalCo2+=d.co2;});
+  return {daily:daily,vehicles:vehicles,totals:{dist:Math.round(totalDist*10)/10,co2:Math.round(totalCo2*10)/10}};
+}
+
+function initCarbonDashboard(){
+  var CD=computeCarbonData(), totals=CD.totals;
+  var totalRoutes=0;Object.keys(ROUTE_DATA.routes_by_date).forEach(function(d){totalRoutes+=Object.keys(ROUTE_DATA.routes_by_date[d]).length;});
+  var fuelEquiv=totals.co2/2.32, treesEquiv=totals.co2/21.7;
+  var h='';
+  h+='<div class="metric-card"><div class="label">总碳排放量</div><div class="value">'+(totals.co2/1000).toFixed(2)+'<span class="unit"> 吨 CO₂</span></div><div class="sub">全期合计</div></div>';
+  h+='<div class="metric-card"><div class="label">总行驶距离</div><div class="value">'+totals.dist.toLocaleString()+'<span class="unit"> km</span></div><div class="sub">道路系数 ×'+ROAD_FACTOR+'</div></div>';
+  h+='<div class="metric-card"><div class="label">相当燃油量</div><div class="value">'+Math.round(fuelEquiv).toLocaleString()+'<span class="unit"> L</span></div><div class="sub">约合柴油换算</div></div>';
+  h+='<div class="metric-card"><div class="label">单位距离排放</div><div class="value">'+EMISSION_FACTOR+'<span class="unit"> g/km</span></div><div class="sub">轻型商用车标准</div></div>';
+  h+='<div class="metric-card warn"><div class="label">每车每日平均</div><div class="value">'+(totals.co2/totalRoutes).toFixed(1)+'<span class="unit"> kg CO₂</span></div><div class="sub">'+totalRoutes+'条路线平均</div></div>';
+  h+='<div class="metric-card good"><div class="label">每日平均排放</div><div class="value">'+(totals.co2/Object.keys(CD.daily).length).toFixed(1)+'<span class="unit"> kg/天</span></div><div class="sub">相当于 '+Math.round(treesEquiv)+' 棵树/年</div></div>';
+  $('carbon-metrics').innerHTML=h;
+  $('eco-total-co2').textContent=(totals.co2/1000).toFixed(2)+' 吨 CO₂';
+  $('eco-trees').textContent=Math.round(treesEquiv).toLocaleString();
+  $('eco-avg-co2').textContent=(totals.co2/totalRoutes).toFixed(1)+' kg CO₂';
+
+  var dailySorted=Object.entries(CD.daily).sort();
+  var maxCo2=Math.max.apply(null,dailySorted.map(function(d){return d[1].co2;}));
+  new Chart($('chart-daily-co2'),{type:'bar',data:{labels:dailySorted.map(function(d){return d[0].slice(5);}),datasets:[{label:'CO₂ (kg)',data:dailySorted.map(function(d){return d[1].co2;}),backgroundColor:function(c){return c.raw>maxCo2*0.8?'rgba(229,57,53,0.8)':'rgba(26,115,232,0.7)';},borderRadius:4}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{title:{display:true,text:'kg CO₂'}}}}});
+
+  var vehSorted=Object.entries(CD.vehicles).sort(function(a,b){return b[1].co2-a[1].co2;}).slice(0,10);
+  new Chart($('chart-vehicle-co2'),{type:'bar',data:{labels:vehSorted.map(function(v){return v[1].name||v[0];}),datasets:[{label:'CO₂ (kg)',data:vehSorted.map(function(v){return v[1].co2;}),backgroundColor:'rgba(142,36,170,0.7)',borderRadius:4}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}}}});
+
+  var below50=vehSorted.filter(function(v){return v[1].co2<vehSorted[0][1].co2*0.5;}).reduce(function(s,v){return s+v[1].co2;},0);
+  var top3=vehSorted.slice(0,3).reduce(function(s,v){return s+v[1].co2;},0);
+  var rest=totals.co2-top3-below50;
+  new Chart($('chart-emission-pie'),{type:'doughnut',data:{labels:['Top 3 高排放车辆','其他车辆','低排放车辆'],datasets:[{data:[Math.round(top3),Math.round(rest),Math.round(below50)],backgroundColor:['#e53935','#fb8c00','#43a047']}]},options:{responsive:true,plugins:{tooltip:{callbacks:{label:function(c){return c.raw.toLocaleString()+' kg CO₂ ('+(c.raw/totals.co2*100).toFixed(1)+'%)';}}}}}});
+
+  // 距离与排放对比图
+  new Chart($('chart-dist-co2-combo'),{type:'bar',data:{labels:dailySorted.map(function(d){return d[0].slice(5);}),datasets:[{label:'距离 (km)',data:dailySorted.map(function(d){return d[1].dist;}),backgroundColor:'rgba(26,115,232,0.6)',borderRadius:4,yAxisID:'y'},{label:'CO₂ (kg)',data:dailySorted.map(function(d){return d[1].co2;}),type:'line',borderColor:'#e53935',backgroundColor:'rgba(229,57,53,0.1)',fill:true,tension:0.3,pointRadius:3,yAxisID:'y1'}]},options:{responsive:true,plugins:{tooltip:{mode:'index'}},scales:{y:{type:'linear',position:'left',title:{display:true,text:'距离 (km)'}},y1:{type:'linear',position:'right',title:{display:true,text:'CO₂ (kg)'},grid:{drawOnChartArea:false}}}}});
+}
+
+// ===== ANALYSIS PANEL =====
+function initAnalysisPanel(){
+  var RD=ROUTE_DATA, dates=Object.keys(RD.routes_by_date).sort();
+  var totalRoutes=0, totalStops=0, totalParcels=0;
+  dates.forEach(function(d){
+    var routes=RD.routes_by_date[d];
+    Object.keys(routes).forEach(function(c){totalRoutes++;totalStops+=routes[c].stop_count;totalParcels+=routes[c].total_parcels;});
+  });
+  $('analysis-subtitle').textContent=dates.length+'天配送数据分析 · '+totalRoutes+'条路线 · '+totalStops.toLocaleString()+'个配送点';
+  var h='';
+  h+='<div class="metric-card"><div class="label">总配送日数</div><div class="value">'+dates.length+'<span class="unit"> 天</span></div></div>';
+  h+='<div class="metric-card"><div class="label">总路线数</div><div class="value">'+totalRoutes+'<span class="unit"> 条</span></div></div>';
+  h+='<div class="metric-card"><div class="label">总配送点数</div><div class="value">'+totalStops.toLocaleString()+'<span class="unit"> 点</span></div></div>';
+  h+='<div class="metric-card"><div class="label">总货物数</div><div class="value">'+totalParcels.toLocaleString()+'<span class="unit"> 件</span></div></div>';
+  h+='<div class="metric-card"><div class="label">平均每路线配送点</div><div class="value">'+(totalStops/totalRoutes).toFixed(1)+'<span class="unit"> 点</span></div></div>';
+  h+='<div class="metric-card"><div class="label">平均每路线货量</div><div class="value">'+Math.round(totalParcels/totalRoutes)+'<span class="unit"> 件</span></div></div>';
+  $('analysis-metrics').innerHTML=h;
+
+  var dailyStats=dates.map(function(d){
+    var routes=RD.routes_by_date[d], stops=0, parcels=0, vehs=Object.keys(routes).length;
+    Object.keys(routes).forEach(function(c){stops+=routes[c].stop_count;parcels+=routes[c].total_parcels;});
+    return {date:d.slice(5),stops:stops,parcels:parcels,vehicles:vehs};
+  });
+
+  new Chart($('chart-daily-stats'),{type:'bar',data:{labels:dailyStats.map(function(d){return d.date;}),datasets:[{label:'配送点',data:dailyStats.map(function(d){return d.stops;}),backgroundColor:'rgba(26,115,232,0.7)',borderRadius:4,yAxisID:'y'},{label:'车辆数',data:dailyStats.map(function(d){return d.vehicles;}),backgroundColor:'rgba(67,160,71,0.7)',borderRadius:4,yAxisID:'y1'}]},options:{responsive:true,plugins:{tooltip:{mode:'index'}},scales:{y:{type:'linear',position:'left',title:{display:true,text:'配送点数'}},y1:{type:'linear',position:'right',title:{display:true,text:'车辆数'},grid:{drawOnChartArea:false}}}}});
+
+  var vehStops={};
+  dates.forEach(function(d){var routes=RD.routes_by_date[d];Object.keys(routes).forEach(function(c){var n=routes[c].vehicle_name||c;vehStops[n]=(vehStops[n]||0)+routes[c].stop_count;});});
+  var vsSorted=Object.entries(vehStops).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  new Chart($('chart-vehicle-stops'),{type:'bar',data:{labels:vsSorted.map(function(v){return v[0];}),datasets:[{label:'配送点数',data:vsSorted.map(function(v){return v[1];}),backgroundColor:'rgba(251,140,0,0.7)',borderRadius:4}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}}}});
+
+  new Chart($('chart-daily-parcels'),{type:'line',data:{labels:dailyStats.map(function(d){return d.date;}),datasets:[{label:'货量(件)',data:dailyStats.map(function(d){return d.parcels;}),borderColor:'#1a73e8',backgroundColor:'rgba(26,115,232,0.1)',fill:true,tension:0.3,pointRadius:4}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{title:{display:true,text:'件数'}}}}});
+
+  // 车辆综合对比图 (配送点+货量+距离)
+  var vehCombo=Object.entries(vehStops).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  var vehNames=vehCombo.map(function(v){return v[0];});
+  var vehParcels=vehCombo.map(function(v){
+    var total=0;dates.forEach(function(d){var routes=RD.routes_by_date[d];Object.keys(routes).forEach(function(c){if((routes[c].vehicle_name||c)===v[0])total+=routes[c].total_parcels;});});
+    return total;
+  });
+  var vehDists=vehCombo.map(function(v){
+    var total=0;dates.forEach(function(d){var routes=RD.routes_by_date[d];Object.keys(routes).forEach(function(c){if((routes[c].vehicle_name||c)===v[0]){var stops=routes[c].stops;var dd=haversine(DEPOT.lat,DEPOT.lon,stops[0].lat,stops[0].lon);for(var ii=0;ii<stops.length-1;ii++)dd+=haversine(stops[ii].lat,stops[ii].lon,stops[ii+1].lat,stops[ii+1].lon);dd+=haversine(stops[stops.length-1].lat,stops[stops.length-1].lon,DEPOT.lat,DEPOT.lon);total+=dd;}});});
+    return Math.round(total);
+  });
+  new Chart($('chart-vehicle-combo'),{type:'bar',data:{labels:vehNames,datasets:[{label:'配送点',data:vehCombo.map(function(v){return v[1];}),backgroundColor:'rgba(26,115,232,0.7)',borderRadius:4,yAxisID:'y'},{label:'货量(件)',data:vehParcels,backgroundColor:'rgba(67,160,71,0.7)',borderRadius:4,yAxisID:'y1'},{label:'距离(km)',data:vehDists,type:'line',borderColor:'#e53935',backgroundColor:'transparent',tension:0.2,pointRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{tooltip:{mode:'index'}},scales:{y:{type:'linear',position:'left',title:{display:true,text:'配送点'}},y1:{type:'linear',position:'right',title:{display:true,text:'货量'},grid:{drawOnChartArea:false}},y2:{type:'linear',position:'right',title:{display:true,text:'距离km'},grid:{drawOnChartArea:false}}}}});
+
+  var CD=computeCarbonData();
+  var tbody=$('daily-table').querySelector('tbody');
+  dailyStats.forEach(function(d){
+    var cd=CD.daily[d.date]||{};
+    var avgDist=d.stops>0?(cd.dist||0)/d.stops:0;
+    var tr=document.createElement('tr');
+    tr.innerHTML='<td>'+d.date+'</td><td>'+d.vehicles+'</td><td>'+d.stops+'</td><td>'+d.parcels.toLocaleString()+'</td><td>'+(cd.dist||0).toFixed(0)+'</td><td>'+avgDist.toFixed(1)+'</td><td class="highlight">'+(cd.co2||0).toFixed(1)+'</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+// ===== DATA CENTER =====
+function initDataCenter(){
+  // Current data status
+  var dates=Object.keys(ROUTE_DATA.routes_by_date).sort();
+  var totalRoutes=0,totalStops=0,totalParcels=0;
+  dates.forEach(function(d){Object.keys(ROUTE_DATA.routes_by_date[d]).forEach(function(c){totalRoutes++;totalStops+=ROUTE_DATA.routes_by_date[d][c].stop_count;totalParcels+=ROUTE_DATA.routes_by_date[d][c].total_parcels;});});
+  $('data-status').innerHTML=
+    '<div class="status-item"><div class="val">'+dates.length+'</div><div class="lbl">配送天数</div></div>'+
+    '<div class="status-item"><div class="val">'+totalRoutes+'</div><div class="lbl">总路线数</div></div>'+
+    '<div class="status-item"><div class="val">'+totalStops.toLocaleString()+'</div><div class="lbl">总配送点</div></div>'+
+    '<div class="status-item"><div class="val">'+totalParcels.toLocaleString()+'</div><div class="lbl">总货物数</div></div>';
+
+  // Upload zone events
+  var zone=$('upload-zone'), input=$('file-input');
+  zone.addEventListener('click',function(){input.click();});
+  zone.addEventListener('dragover',function(e){e.preventDefault();zone.classList.add('dragover');});
+  zone.addEventListener('dragleave',function(){zone.classList.remove('dragover');});
+  zone.addEventListener('drop',function(e){e.preventDefault();zone.classList.remove('dragover');handleFile(e.dataTransfer.files[0]);});
+  input.addEventListener('change',function(){if(input.files[0])handleFile(input.files[0]);});
+
+  // 初始上传区状态更新
+  updateUploadUI();
+}
+
+function updateUploadUI(){
+  var zone=$('upload-zone');
+  var textEl=zone.querySelector('.text');
+  var hintEl=zone.querySelector('.hint');
+  // 检查是否通过HTTP服务器访问
+  if(window.location.protocol==='file:'){
+    textEl.innerHTML='&#x26A0; 通过 file:// 打开，无法使用自动上传';
+    hintEl.innerHTML='请通过 HTTP 服务访问: <code>python3 backend/server.py</code> 然后打开 http://localhost:8765/dispatch.html';
+    zone.style.borderColor='#ff9800';
+    zone.style.background='#fff8e1';
+  }
+}
+
+function handleFile(file){
+  if(!file){return;}
+  if(typeof XLSX==='undefined'){$('preview-box').style.display='block';$('preview-box').innerHTML='<div style="color:#d32f2f">SheetJS 库未加载，无法预览文件</div>';return;}
+
+  var reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      var wb=XLSX.read(e.target.result,{type:'array'});
+      var html='<div style="font-weight:600;margin-bottom:6px">文件: '+file.name+' ('+(file.size/1024).toFixed(0)+' KB) · '+wb.SheetNames.length+' 个工作表</div>';
+      wb.SheetNames.forEach(function(name){
+        var ws=wb.Sheets[name];
+        var rows=XLSX.utils.sheet_to_json(ws,{header:1});
+        html+='<div style="margin-bottom:8px"><b>'+name+'</b>: '+rows.length+' 行</div>';
+        if(rows.length>0){
+          html+='<table><thead><tr>';
+          var headers=rows[0]||[];
+          headers.forEach(function(h){html+='<th>'+(h||'')+'</th>';});
+          html+='</tr></thead><tbody>';
+          var previewRows=Math.min(5,rows.length-1);
+          for(var i=1;i<=previewRows;i++){
+            html+='<tr>';
+            var row=rows[i]||[];
+            for(var j=0;j<headers.length;j++){html+='<td>'+(row[j]!==undefined?String(row[j]).substring(0,40):'')+'</td>';}
+            html+='</tr>';
+          }
+          if(rows.length>previewRows+1)html+='<tr><td colspan="'+headers.length+'" style="color:#888">... 还有 '+(rows.length-previewRows-1)+' 行</td></tr>';
+          html+='</tbody></table>';
+        }
+      });
+
+      // 如果是HTTP访问，添加上传按钮
+      if(window.location.protocol==='http:'||window.location.protocol==='https:'){
+        html+='<button onclick="uploadToServer()" style="margin-top:10px;padding:8px 20px;background:#1a73e8;color:white;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit;width:100%">&#x1F680; 上传并优化 (自动刷新)</button>';
+        // 存储当前文件引用
+        window._uploadFile=file;
+      }
+
+      $('preview-box').style.display='block';$('preview-box').innerHTML=html;
+      $('update-cmd').textContent='cd backend && python3 delivery_optimizer.py "'+file.name+'"';
+    }catch(err){
+      $('preview-box').style.display='block';$('preview-box').innerHTML='<div style="color:#d32f2f">文件解析失败: '+err.message+'</div>';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function uploadToServer(){
+  var file=window._uploadFile;
+  if(!file){alert('请先选择文件');return;}
+
+  var preview=$('preview-box');
+  preview.innerHTML+='<div style="margin-top:10px;padding:10px;background:#e3f2fd;border-radius:6px;text-align:center"><div class="spinner" style="width:20px;height:20px;border:2px solid #1a73e8;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block;vertical-align:middle;margin-right:8px"></div> 正在上传并优化，请稍候...</div>';
+
+  var formData=new FormData();
+  formData.append('file',file);
+
+  fetch('/api/upload-dispatch',{method:'POST',body:formData})
+    .then(function(r){return r.json();})
+    .then(function(result){
+      if(result.success){
+        preview.innerHTML+='<div style="margin-top:8px;padding:10px;background:#c8e6c9;border-radius:6px;text-align:center;color:#2e7d32;font-weight:600">&#10004; 优化完成！数据已更新 (route_data.js: '+(result.dataSize/1024).toFixed(0)+' KB)</div><div style="text-align:center;margin-top:6px;color:#1a73e8;font-size:12px">页面将在3秒后自动刷新...</div>';
+        setTimeout(function(){location.reload();},3000);
+      }else{
+        preview.innerHTML+='<div style="margin-top:8px;padding:10px;background:#ffebee;border-radius:6px;color:#d32f2f"><b>优化失败:</b> '+(result.error||'未知错误')+'</div>';
+        if(result.stdout) preview.innerHTML+='<pre style="margin-top:4px;font-size:10px;max-height:200px;overflow:auto;background:#f5f5f5;padding:8px;border-radius:4px">'+result.stdout.substring(0,500)+'</pre>';
+      }
+    })
+    .catch(function(err){
+      preview.innerHTML+='<div style="margin-top:8px;padding:10px;background:#ffebee;border-radius:6px;color:#d32f2f"><b>上传失败:</b> '+err.message+'<br/><span style="font-size:11px">请确认已启动服务器: python3 backend/server.py</span></div>';
+    });
+}
+
+function copyCmd(){
+  var cmd=$('update-cmd').textContent;
+  navigator.clipboard.writeText(cmd).then(function(){
+    var btn=document.querySelector('.copy-btn');btn.textContent='已复制!';setTimeout(function(){btn.textContent='复制';},1500);
+  }).catch(function(){
+    prompt('请手动复制命令:',cmd);
+  });
+}
+
+function downloadTemplate(){
+  // Create a minimal template with required sheets
+  if(typeof XLSX==='undefined'){alert('SheetJS 未加载');return;}
+  var wb=XLSX.utils.book_new();
+  // Sheet 0: 荷物情報
+  var headers0=['荷物コード','荷物名称','重量','容量','配送日','FROM地点（種別）','FROM地点（指定区分）','FROM地点（地点ID）','FROM地点（名称）','FROM地点（住所）','FROM地点（電話番号）','TO地点（種別）','TO地点（指定区分）','TO地点（地点ID）','TO地点（名称）','TO地点（住所）','TO地点（電話番号）','出発日','車種指定１','車種指定２','積込条件','配送時刻指定区分','配送時刻１','配送時刻２','作業時間（基本）','作業時間（2個目以降）'];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([headers0]),'荷物情報');
+  // Sheet 1: 顧客（配送先）マスタ
+  var headers1=['顧客コード','顧客名称','顧客略称','顧客住所','東経','北緯','郵便番号','電話番号','FAX番号','荷役設備','配送先種別','フリガナ','配送可能時刻（開始時刻～）','配送可能時刻（～終了時刻）'];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([headers1]),'顧客（配送先）マスタ');
+  // Sheet 2: from to经纬度
+  var headers2=['顧客コード','顧客名称','地址','纬度','经度','from to'];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([headers2]),'from to经纬度');
+  // Sheet 3: 拠点マスタ
+  var headers3=['拠点コード','拠点名称','拠点住所'];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([headers3]),'拠点マスタ');
+  // Sheet 4: 車種
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['車種コード','車種名称'],['1','小型ボックス'],['2','軽ボックス'],['3','軽ボンゴ']]),'車種');
+  // Sheet 5: 計画車両マスタ
+  var headers4=['車両コード','車両名称','車両略称','屯車','車種','最大積載単位Ａ','最大積載単位Ｂ','出発地点','帰着地点','出発時刻','帰着時刻'];
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([headers4]),'計画車両マスタ');
+  XLSX.writeFile(wb,'配送模板.xlsx');
+}
+
+}); // end checkData
+})();
+</script>
+</body>
+</html>

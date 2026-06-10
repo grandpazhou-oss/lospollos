@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOGISTEED | Smart Logistics Control Tower</title>
+<style>
+:root{--navy:#00132c;--blue:#006ab7;--red:#e60019;--link:#1a5fe8;--gray-50:#f6f7f9;--gray-100:#eef0f3;--gray-200:#dde0e5;--gray-400:#8f949c;--gray-600:#545960;--white:#fff;--radius:6px;--radius-lg:10px;--shadow:0 1px 4px rgba(0,19,44,.06);--shadow-md:0 4px 16px rgba(0,19,44,.08)}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:'Noto Sans JP','PingFang SC','SF Pro Text','Helvetica Neue','Microsoft YaHei',sans-serif;background:var(--gray-50);color:var(--navy)}
+
+.login-page{display:flex;min-height:100vh}
+.login-brand{flex:1.2;background:linear-gradient(165deg,var(--navy) 0%,#001f42 40%,#002855 70%,var(--blue) 100%);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.login-brand::before{content:'';position:absolute;top:-20%;right:-15%;width:500px;height:500px;border-radius:50%;border:1px solid rgba(255,255,255,.04)}
+.login-brand::after{content:'';position:absolute;bottom:-15%;left:-10%;width:350px;height:350px;border-radius:50%;border:1px solid rgba(255,255,255,.03)}
+.login-brand .brand-inner{position:relative;z-index:1;padding:60px 50px;max-width:480px}
+.login-brand .wordmark{font-family:'Urbanist','Noto Sans JP',sans-serif;font-size:42px;font-weight:800;letter-spacing:4px;color:var(--white);margin-bottom:4px;line-height:1.1}
+.login-brand .wordmark .accent{color:var(--red);font-weight:900}
+.login-brand .tagline{font-size:13px;color:rgba(255,255,255,.55);font-weight:300;letter-spacing:1px;margin-bottom:40px}
+.login-brand .kpi-row{display:flex;gap:20px;margin-bottom:40px}
+.login-brand .kpi-item{flex:1;background:rgba(255,255,255,.06);border-radius:var(--radius-lg);padding:16px;border:1px solid rgba(255,255,255,.06)}
+.login-brand .kpi-item .kpi-val{font-size:24px;font-weight:700;color:var(--white);font-family:'Urbanist',sans-serif}
+.login-brand .kpi-item .kpi-label{font-size:10px;color:rgba(255,255,255,.45);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.login-brand .feature-list{display:flex;flex-direction:column;gap:10px}
+.login-brand .feature-item{display:flex;align-items:center;gap:10px;font-size:12px;color:rgba(255,255,255,.55)}
+.login-brand .feature-item .dot{width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0}
+
+.login-form-side{flex:0.8;display:flex;align-items:center;justify-content:center;padding:40px;background:var(--white)}
+.login-form-side .form-container{width:100%;max-width:380px}
+.login-form-side .mini-logo{display:flex;align-items:center;gap:8px;margin-bottom:32px}
+.login-form-side .mini-logo .mark{width:30px;height:30px;background:var(--blue);border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--white);font-size:14px;font-weight:800;font-family:'Urbanist',sans-serif}
+.login-form-side .mini-logo .name{font-size:11px;color:var(--gray-600);font-weight:600;letter-spacing:1.5px}
+.login-form-side h2{font-size:22px;font-weight:700;color:var(--navy);margin-bottom:4px}
+.login-form-side .desc{font-size:12px;color:var(--gray-600);margin-bottom:28px;line-height:1.6}
+
+.form-group{margin-bottom:18px}
+.form-group label{display:block;font-size:10px;font-weight:700;color:var(--gray-600);margin-bottom:5px;text-transform:uppercase;letter-spacing:.8px}
+.form-group input{width:100%;padding:10px 12px;border:1.5px solid var(--gray-200);border-radius:var(--radius);font-size:13px;font-family:inherit;color:var(--navy);background:var(--gray-50);transition:all .2s}
+.form-group input:focus{border-color:var(--blue);background:var(--white);outline:none;box-shadow:0 0 0 3px rgba(0,106,183,.08)}
+.form-group input::placeholder{color:var(--gray-400)}
+
+.options{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;font-size:11px}
+.options label{display:flex;align-items:center;gap:5px;color:var(--gray-600);cursor:pointer}
+.options input[type=checkbox]{accent-color:var(--blue);width:14px;height:14px;cursor:pointer}
+.options a{color:var(--link);text-decoration:none;font-weight:500;transition:opacity .2s}
+.options a:hover{opacity:.7}
+
+.btn-login{width:100%;padding:11px;border:none;border-radius:var(--radius);background:var(--blue);color:var(--white);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:.3px;transition:all .2s}
+.btn-login:hover{background:#005590;box-shadow:0 4px 12px rgba(0,106,183,.25)}
+.btn-login:disabled{opacity:.5;cursor:not-allowed}
+.btn-login .spinner{display:none;width:15px;height:15px;border:2px solid rgba(255,255,255,.3);border-top-color:var(--white);border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn-login.loading .btn-text{display:none}
+.btn-login.loading .spinner{display:inline-block}
+
+.error-msg{background:rgba(230,0,25,.05);color:var(--red);padding:9px 12px;border-radius:var(--radius);font-size:11px;margin-bottom:14px;display:none;border:1px solid rgba(230,0,25,.12)}
+
+.footer-note{text-align:center;margin-top:20px;font-size:10px;color:var(--gray-400)}
+.footer-note span{margin:0 5px}
+
+@media(max-width:768px){
+  .login-page{flex-direction:column}
+  .login-brand{padding:32px 24px}
+  .login-brand .wordmark{font-size:30px}
+  .login-brand .kpi-row{display:none}
+  .login-brand .feature-list{display:none}
+  .login-form-side{padding:28px 20px}
+}
+</style>
+</head>
+<body>
+
+<div class="login-page">
+  <div class="login-brand">
+    <div class="brand-inner">
+      <img src="/assets/logisteed-logo-white.png" alt="LOGISTEED" style="height:36px;margin-bottom:4px" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"><div style="display:none;font-family:Urbanist,sans-serif;font-size:42px;font-weight:800;letter-spacing:4px;color:white;margin-bottom:4px;line-height:1.1">LOG<span style="color:#e60019;font-weight:900">I</span>STEED</div>
+      <div class="tagline">Taking on the Future — Smart Logistics Control Tower</div>
+
+      <div class="kpi-row">
+        <div class="kpi-item"><div class="kpi-val">21</div><div class="kpi-label">Delivery Days</div></div>
+        <div class="kpi-item"><div class="kpi-val">316</div><div class="kpi-label">Optimized Routes</div></div>
+        <div class="kpi-item"><div class="kpi-val">10K</div><div class="kpi-label">Delivery Points</div></div>
+      </div>
+
+      <div class="feature-list">
+        <div class="feature-item"><span class="dot"></span> Supply Chain Visibility — 实时路线可视化与监控</div>
+        <div class="feature-item"><span class="dot"></span> Route Optimization — 多车辆智能调度与路径优化</div>
+        <div class="feature-item"><span class="dot"></span> Sustainability — 碳排放追踪与 ESG 数据分析</div>
+        <div class="feature-item"><span class="dot"></span> Data Center — 一键上传 · 即时分析 · 结果导出</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-form-side">
+    <div class="form-container">
+      <div class="mini-logo">
+        <div class="mark">L</div>
+        <div class="name">LOGISTEED CONTROL TOWER</div>
+      </div>
+      <h2>Welcome Back</h2>
+      <div class="desc">Sign in to access the Smart Logistics Control Tower — your unified platform for route optimization and sustainability analytics.</div>
+
+      <div class="error-msg" id="error-msg"></div>
+
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="username" placeholder="Enter your username" autocomplete="username" required autofocus value="demo">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password" required value="demo123">
+        </div>
+
+        <div class="options">
+          <label><input type="checkbox" id="remember"> Keep me signed in</label>
+          <a href="javascript:void(0)" onclick="alert('Please contact your system administrator to reset your password.')">Forgot password?</a>
+        </div>
+
+        <button type="submit" class="btn-login" id="btn-login">
+          <span class="spinner"></span>
+          <span class="btn-text">Sign In to Control Tower</span>
+        </button>
+      </form>
+
+      <div class="footer-note">
+        <span>v2.0</span>&#x2022;<span>Enterprise Edition</span>&#x2022;<span>LOGISTEED</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  if (sessionStorage.getItem('ct_logged_in') === 'true' || localStorage.getItem('ct_remember') === 'true') {
+    window.location.replace('dispatch.html');
+  }
+  var u = localStorage.getItem('ct_user');
+  if (u) { document.getElementById('username').value = u; document.getElementById('remember').checked = true; }
+})();
+
+function handleLogin(e) {
+  e.preventDefault();
+  var username = document.getElementById('username').value.trim();
+  var password = document.getElementById('password').value.trim();
+  var remember = document.getElementById('remember').checked;
+  var btn = document.getElementById('btn-login'), err = document.getElementById('error-msg');
+  err.style.display = 'none';
+  if (!username || !password) { err.textContent = 'Please enter your username and password.'; err.style.display = 'block'; return; }
+  btn.classList.add('loading'); btn.disabled = true;
+  setTimeout(function() {
+    btn.classList.remove('loading'); btn.disabled = false;
+    if (username.length >= 2 && password.length >= 1) {
+      sessionStorage.setItem('ct_logged_in', 'true'); sessionStorage.setItem('ct_user', username);
+      if (remember) { localStorage.setItem('ct_remember', 'true'); localStorage.setItem('ct_user', username); }
+      else { localStorage.removeItem('ct_remember'); }
+      window.location.replace('dispatch.html');
+    } else {
+      err.textContent = 'Invalid username or password. Please try again.'; err.style.display = 'block';
+    }
+  }, 800 + Math.random() * 600);
+}
+</script>
+</body>
+</html>
