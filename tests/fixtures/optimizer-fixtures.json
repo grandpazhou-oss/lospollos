@@ -1,0 +1,104 @@
+{
+  "defaults": {
+    "depot": { "id": "DEPOT-T", "name": "Test Depot", "lon": 120.0, "lat": 30.0 },
+    "constraints": {
+      "workStart": "09:00",
+      "workEnd": "18:00",
+      "averageSpeedKmh": 30,
+      "defaultServiceMinutes": 5,
+      "roadDistanceFactor": 1.0
+    }
+  },
+  "fixtures": {
+    "distance_distinction": {
+      "orders": [
+        { "id": "D-01", "code": "D-01", "date": "2026-01-01", "lon": 120.01, "lat": 30.0, "volume": 1, "weight": 1, "twStart": "09:00", "twEnd": "18:00" },
+        { "id": "D-02", "code": "D-02", "date": "2026-01-01", "lon": 120.02, "lat": 30.0, "volume": 1, "weight": 1, "twStart": "09:00", "twEnd": "18:00" }
+      ],
+      "vehicles": [
+        { "vehicleId": "D-V1", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" }
+      ],
+      "expect": { "assigned": 2, "usedVehicles": 1, "maxDistanceKm": 5 }
+    },
+    "cost_distinction": {
+      "orders": [
+        { "id": "C-01", "code": "C-01", "date": "2026-01-01", "lon": 120.05, "lat": 30.0, "volume": 1, "weight": 1, "twStart": "09:00", "twEnd": "18:00" }
+      ],
+      "vehicles": [
+        { "vehicleId": "C-EXPENSIVE", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00", "fixedCost": 500, "perKmCost": 10 },
+        { "vehicleId": "C-CHEAP", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00", "fixedCost": 10, "perKmCost": 1 }
+      ],
+      "expect": { "goal": "cost", "vehicleId": "C-CHEAP", "assigned": 1 }
+    },
+    "carbon_distinction": {
+      "orders": [
+        { "id": "E-01", "code": "E-01", "date": "2026-01-01", "lon": 120.05, "lat": 30.0, "volume": 1, "weight": 1, "twStart": "09:00", "twEnd": "18:00" }
+      ],
+      "vehicles": [
+        { "vehicleId": "E-HIGH", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00", "emissionFactor": 0.5 },
+        { "vehicleId": "E-LOW", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00", "emissionFactor": 0.05 }
+      ],
+      "expect": { "goal": "carbon", "vehicleId": "E-LOW", "assigned": 1 }
+    },
+    "one_vehicle_boundary": {
+      "orders": [
+        { "id": "V1-01", "code": "V1-01", "date": "2026-01-01", "lon": 120.01, "lat": 30.0, "volume": 4, "weight": 2, "twStart": "09:00", "twEnd": "18:00" },
+        { "id": "V1-02", "code": "V1-02", "date": "2026-01-01", "lon": 120.02, "lat": 30.0, "volume": 4, "weight": 2, "twStart": "09:00", "twEnd": "18:00" }
+      ],
+      "vehicles": [
+        { "vehicleId": "V1-A", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" },
+        { "vehicleId": "V1-B", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" }
+      ],
+      "expect": { "goal": "vehicles", "assigned": 2, "usedVehicles": 1 }
+    },
+    "two_vehicle_boundary": {
+      "orders": [
+        { "id": "V2-01", "code": "V2-01", "date": "2026-01-01", "lon": 120.01, "lat": 30.0, "volume": 6, "weight": 2, "twStart": "09:00", "twEnd": "18:00" },
+        { "id": "V2-02", "code": "V2-02", "date": "2026-01-01", "lon": 120.02, "lat": 30.0, "volume": 6, "weight": 2, "twStart": "09:00", "twEnd": "18:00" }
+      ],
+      "vehicles": [
+        { "vehicleId": "V2-A", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" },
+        { "vehicleId": "V2-B", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" }
+      ],
+      "expect": { "goal": "vehicles", "assigned": 2, "usedVehicles": 2 }
+    },
+    "time_window_conflict": {
+      "orders": [
+        { "id": "T-01", "code": "T-01", "date": "2026-01-01", "lon": 120.5, "lat": 30.0, "volume": 1, "weight": 1, "twStart": "09:00", "twEnd": "09:05" }
+      ],
+      "vehicles": [
+        { "vehicleId": "T-V1", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "10:00" }
+      ],
+      "expect": { "assigned": 0, "unassigned": 1, "reasonCode": "TIME_WINDOW_CONFLICT" }
+    },
+    "single_order_over_capacity": {
+      "orders": [
+        { "id": "O-01", "code": "O-01", "date": "2026-01-01", "lon": 120.01, "lat": 30.0, "volume": 11, "weight": 1, "twStart": "09:00", "twEnd": "18:00" }
+      ],
+      "vehicles": [
+        { "vehicleId": "O-V1", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" }
+      ],
+      "expect": { "assigned": 0, "blocked": 1, "reasonCode": "ORDER_EXCEEDS_ALL_VEHICLES_VOLUME" }
+    },
+    "drop_penalty": {
+      "orders": [
+        { "id": "P-01", "code": "P-01", "date": "2026-01-01", "lon": 120.01, "lat": 30.0, "volume": 6, "weight": 1, "twStart": "09:00", "twEnd": "18:00", "priorityWeight": 10 },
+        { "id": "P-02", "code": "P-02", "date": "2026-01-01", "lon": 120.02, "lat": 30.0, "volume": 6, "weight": 1, "twStart": "09:00", "twEnd": "18:00", "priorityWeight": 1 }
+      ],
+      "vehicles": [
+        { "vehicleId": "P-V1", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" }
+      ],
+      "expect": { "assigned": 1, "unassigned": 1, "assignedOrderId": "P-01", "reasonCode": "TOTAL_CAPACITY_SHORTFALL" }
+    },
+    "duplicate_and_conservation": {
+      "orders": [
+        { "id": "Q-01", "_scenarioOrderKey": "Q-01", "code": "Q-01", "date": "2026-01-01", "lon": 120.01, "lat": 30.0, "volume": 1, "weight": 1, "twStart": "09:00", "twEnd": "18:00" },
+        { "id": "Q-01", "_scenarioOrderKey": "Q-01#2", "code": "Q-01", "date": "2026-01-01", "lon": 120.02, "lat": 30.0, "volume": 1, "weight": 1, "twStart": "09:00", "twEnd": "18:00" }
+      ],
+      "vehicles": [
+        { "vehicleId": "Q-V1", "maxVolume": 10, "maxWeight": 10, "start": "09:00", "end": "18:00" }
+      ],
+      "expect": { "assigned": 1, "blocked": 1, "reasonCode": "INVALID_DEMAND", "conservation": true }
+    }
+  }
+}

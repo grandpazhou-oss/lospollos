@@ -1,0 +1,1657 @@
+{
+  "contractVersion": "stct-planning-contract-v1.3.1",
+  "canonicalVersion": "stct-canonical-json-v2",
+  "caseCount": 10,
+  "cases": [
+    {
+      "id": "normal_chinese",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:81efc709abbb1c7b1d7ccb06ef4486767c3388869e748c40af0a58d72c3fb180",
+        "inputHash": "sha256:57aa34d639c55a30fb0435e669daa4197be3276dcaa8e21fe4b456e6b517085d",
+        "requestHash": "sha256:f1d9d573e3d784d32dbadfd90734fc73a5b02a895afef8031a39c57e63facdbf",
+        "planHash": "sha256:ca9f00af8f2a4f25b8251d764d672448ef33801c0463da31b6f0067ae6f45b67"
+      }
+    },
+    {
+      "id": "japanese_name",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "熊本配送センター",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"熊本配送センター\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:6c6b1c80dc4307c4eea4f3d0de2d4e24cdf54a9331b99f936cfadef154058383",
+        "inputHash": "sha256:cad79a07d84bbd8d5a2343913d777af854242b85764dcdd0579626c0cb13ad40",
+        "requestHash": "sha256:6c6ad14bd890045299607238de3d7fc49fb295f4efd0761994d81b809c05191e",
+        "planHash": "sha256:d7ed6afeca331e4f620c0f194ccd56197bd2b90f0dd2172d0d34adf2bb36c7c0"
+      }
+    },
+    {
+      "id": "unicode_combining",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "Café",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"Café\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:9d647f083390f573ae89e05ec9be0bc89bac33966725725691498dc6e11b9bf4",
+        "inputHash": "sha256:c709d4467ec5f8036d52c2b1c99ac3bd9107f0197c393c672b14e426891fd0ba",
+        "requestHash": "sha256:39b534de2a705bc932ec6aae5763b214c0eddf7acc9339b89e333d2f5a9fd881",
+        "planHash": "sha256:58c3337512324d5782a5c9f779731d9c1d0694fed6c07543305eeccec22a48d4"
+      }
+    },
+    {
+      "id": "cross_midnight",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "23:00",
+            "twEnd": "01:30",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"01:30\",\"twStart\":\"23:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:c95baed8eec196c2e824ef76969bc421273f470c4e8337caa3e7119706936f17",
+        "inputHash": "sha256:516c2901718adf8d24eaadab34344a295cc33970714f8e0357d69319df81d437",
+        "requestHash": "sha256:2631de1251702f48fc1f3caf4ee7e7e977c16f90d2e4f301ad9d65a391199241",
+        "planHash": "sha256:6887d398a3020a95403031334bea347abaf902b71af7f17fdc10bda8ef8d56d9"
+      }
+    },
+    {
+      "id": "empty_available_date",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:76b785ac2f9b464d8d454c57e86cc24166290e1ba6466f70c63c51c273d1d513",
+        "inputHash": "sha256:9595e84919aed50fcf7cb7e087af497894ad1e21327159a94a007e504ebe7e03",
+        "requestHash": "sha256:4e318eb07e28bfb8a52947f5177454803eb9866fce25843dabb10bf1370c0068",
+        "planHash": "sha256:2f0db5cd583f6d79d1e3196bfc06eb75b1343c616a4baa5ab2746ce82cd91eaf"
+      }
+    },
+    {
+      "id": "virtual_vehicle",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "VIRTUAL-V-001-01",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "V-001",
+            "isVirtual": true,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"VIRTUAL-V-001-01\",\"isVirtual\":true,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"V-001\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:aacc0348e94d01d61db7c923d27fe0746bfe363720d69ee263b5de2354703db2",
+        "inputHash": "sha256:e746c4395c84cf2ec457980dd34b756ba7d1b7e494579301756ed4176524fd4b",
+        "requestHash": "sha256:f3ce0c26b96d1820d34941509f113a45f275c5d19c56079afa2beb29f7484a56",
+        "planHash": "sha256:94a1f2e07c08f58620fbad98ce0dfb2eacd2a31cefddb01551131486ed9b74d2"
+      }
+    },
+    {
+      "id": "zero_values",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 0,
+            "volume": 0,
+            "weight": 0,
+            "serviceMin": 0,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"0\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"0\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.000\",\"weight\":\"0.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:027b4a547e59204cf792307f8681a58788671bfc737e62664f16630525d598f2",
+        "inputHash": "sha256:0051c2f9e1090a1c530bbcccd7ab39a35970c37dc623ec7c08a3679d798c5a0c",
+        "requestHash": "sha256:7bde039e682e4260fa1ebe94724d0a5cbef9e83b5346a16a5b0fccd4c8e5294c",
+        "planHash": "sha256:66dff70f89dd775309c27c6bb77dd369861e209bc9fffc2973560773e3bb4fb9"
+      }
+    },
+    {
+      "id": "decimal_rounding",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": "121.35820755",
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": "0.1655",
+            "weight": "16.0004",
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582076\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.166\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:f066f6cbc0b387d233badd3d9701f3e4242408a16688efbaed62cf23f7ef0cae",
+        "inputHash": "sha256:c4b4355ec84ec1718459caf0d8bbea97c1c30be72d3022f0dca484ce17c18beb",
+        "requestHash": "sha256:ad5e2cb184e78b42777011a7e09641eb84341398c654d559f4aec13bd84c8ae9",
+        "planHash": "sha256:27bb59f8399c31acfc1f9c01e491c5dc652eaac1fbe309ade02044db2c4c46c3"
+      }
+    },
+    {
+      "id": "orders_shuffled",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:81efc709abbb1c7b1d7ccb06ef4486767c3388869e748c40af0a58d72c3fb180",
+        "inputHash": "sha256:57aa34d639c55a30fb0435e669daa4197be3276dcaa8e21fe4b456e6b517085d",
+        "requestHash": "sha256:f1d9d573e3d784d32dbadfd90734fc73a5b02a895afef8031a39c57e63facdbf",
+        "planHash": "sha256:ca9f00af8f2a4f25b8251d764d672448ef33801c0463da31b6f0067ae6f45b67"
+      }
+    },
+    {
+      "id": "vehicles_shuffled",
+      "scenario": {
+        "planningMode": "SINGLE_DAY",
+        "planningDate": "2026-05-01",
+        "depot": {
+          "id": "D-01",
+          "name": "上海仓",
+          "address": "九新公路 855 号",
+          "lon": 121.3182798,
+          "lat": 31.0991395
+        },
+        "orders": [
+          {
+            "id": "O-001",
+            "code": "C001",
+            "name": "上海店",
+            "address": "长宁区 1 号",
+            "date": "2026-05-01",
+            "lon": 121.3582075,
+            "lat": 31.21796455,
+            "count": 3,
+            "volume": 0.165,
+            "weight": 16,
+            "serviceMin": 2,
+            "twStart": "13:00",
+            "twEnd": "15:00",
+            "priority": "high",
+            "priorityWeight": 3,
+            "prioritySource": "mapped",
+            "orderType": "cold",
+            "requiredVehicleType": ""
+          },
+          {
+            "id": "O-002",
+            "code": "C002",
+            "name": "普通店",
+            "address": "长宁区 2 号",
+            "date": "2026-05-01",
+            "lon": 121.3609523,
+            "lat": 31.2132668,
+            "count": 54,
+            "volume": 2.052,
+            "weight": 315,
+            "serviceMin": 28,
+            "twStart": "13:00",
+            "twEnd": "17:30",
+            "priority": "normal",
+            "priorityWeight": 1,
+            "prioritySource": "mapped",
+            "orderType": "large",
+            "requiredVehicleType": ""
+          }
+        ],
+        "vehicles": [
+          {
+            "id": "V-002",
+            "name": "沪AB0002",
+            "type": "EV-VAN",
+            "availableDate": "2026-05-01",
+            "maxVolume": 8,
+            "maxWeight": 1200,
+            "start": "18:00",
+            "end": "02:00",
+            "fixedCost": 140,
+            "perKmCost": 5.2,
+            "perMinuteCost": 0.4,
+            "perStopCost": 9,
+            "emissionFactor": 0.147,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          },
+          {
+            "id": "V-001",
+            "name": "沪AB0001",
+            "type": "EV-VAN",
+            "availableDate": "",
+            "maxVolume": 5,
+            "maxWeight": 800,
+            "start": "09:00",
+            "end": "17:30",
+            "fixedCost": 120,
+            "perKmCost": 4.8,
+            "perMinuteCost": 0.35,
+            "perStopCost": 8,
+            "emissionFactor": 0.12,
+            "sourceVehicleId": "",
+            "isVirtual": false,
+            "enabled": true
+          }
+        ],
+        "constraints": {
+          "singleTrip": true,
+          "maxWaitingMinutes": 90,
+          "workStart": "09:00",
+          "workEnd": "02:00",
+          "maxOrders": 500,
+          "maxSolveSeconds": 45,
+          "allowUnassigned": true,
+          "capacityScale": 1000,
+          "weightScale": 1000,
+          "maxStops": 500,
+          "maxRouteMinutes": 1020,
+          "shiftExtensionMinutes": 0
+        },
+        "assumptions": {
+          "roadDistanceFactor": 1.35,
+          "averageSpeedKmh": 28,
+          "defaultServiceMin": 5,
+          "costModelVersion": "stct-cost-v1",
+          "emissionModelVersion": "stct-emission-v1",
+          "priorityMappingVersion": "priority-map-v1",
+          "missingVehicleDatePolicy": "blank-means-daily",
+          "missingTimeWindowPolicy": "reject-order",
+          "overnightPolicy": "end-before-start-means-next-day",
+          "distanceModel": "haversine-road-factor",
+          "roadMetersRounding": "half-up",
+          "travelMinutesRounding": "ceil",
+          "costMinuteBasis": "driving",
+          "defaultEmissionFactor": 0.192,
+          "lowUtilizationThreshold": 35,
+          "balancedWeightUsedVehicles": 20,
+          "balancedWeightDistance": 20,
+          "balancedWeightCost": 20,
+          "balancedWeightCarbon": 15,
+          "balancedWeightLatestEnd": 15,
+          "balancedWeightUtilization": 10
+        }
+      },
+      "requestOptions": {
+        "objective": "distance",
+        "timeLimitSeconds": 8,
+        "engineRequested": "ortools",
+        "searchConfiguration": {
+          "firstSolutionStrategy": "parallel-cheapest-insertion",
+          "localSearchMetaheuristic": "guided-local-search",
+          "randomSeed": 13,
+          "logSearch": false,
+          "servicePolicy": "priority-score-then-assigned-count-then-business-objective"
+        }
+      },
+      "plan": {
+        "routes": [
+          {
+            "routeId": "R-01",
+            "vehicleId": "V-001",
+            "orderIds": [
+              "O-001",
+              "O-002"
+            ]
+          }
+        ],
+        "unassignedOrderIds": [],
+        "blockedOrderIds": [],
+        "manualRevision": 0
+      },
+      "expected": {
+        "canonicalString": "{\"assumptions\":{\"averageSpeedKmh\":\"28.000\",\"balancedWeightCarbon\":\"15\",\"balancedWeightCost\":\"20\",\"balancedWeightDistance\":\"20\",\"balancedWeightLatestEnd\":\"15\",\"balancedWeightUsedVehicles\":\"20\",\"balancedWeightUtilization\":\"10\",\"costMinuteBasis\":\"driving\",\"costModelVersion\":\"stct-cost-v1\",\"defaultEmissionFactor\":\"0.192000\",\"defaultServiceMin\":\"5\",\"distanceModel\":\"haversine-road-factor\",\"emissionModelVersion\":\"stct-emission-v1\",\"lowUtilizationThreshold\":\"35.0\",\"missingTimeWindowPolicy\":\"reject-order\",\"missingVehicleDatePolicy\":\"blank-means-daily\",\"overnightPolicy\":\"end-before-start-means-next-day\",\"priorityMappingVersion\":\"priority-map-v1\",\"roadDistanceFactor\":\"1.3500\",\"roadMetersRounding\":\"half-up\",\"travelMinutesRounding\":\"ceil\"},\"canonicalVersion\":\"stct-canonical-json-v2\",\"constraints\":{\"allowUnassigned\":true,\"capacityScale\":\"1000\",\"maxOrders\":\"500\",\"maxRouteMinutes\":\"1020\",\"maxSolveSeconds\":\"45\",\"maxStops\":\"500\",\"maxWaitingMinutes\":\"90\",\"shiftExtensionMinutes\":\"0\",\"singleTrip\":true,\"weightScale\":\"1000\",\"workEnd\":\"02:00\",\"workStart\":\"09:00\"},\"contractVersion\":\"stct-planning-contract-v1.3.1\",\"depot\":{\"address\":\"九新公路 855 号\",\"id\":\"D-01\",\"lat\":\"31.0991395\",\"lon\":\"121.3182798\",\"name\":\"上海仓\"},\"orders\":[{\"address\":\"长宁区 1 号\",\"code\":\"C001\",\"count\":\"3\",\"date\":\"2026-05-01\",\"id\":\"O-001\",\"lat\":\"31.2179646\",\"lon\":\"121.3582075\",\"name\":\"上海店\",\"orderType\":\"cold\",\"priority\":\"high\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"3\",\"requiredVehicleType\":\"\",\"serviceMin\":\"2\",\"twEnd\":\"15:00\",\"twStart\":\"13:00\",\"volume\":\"0.165\",\"weight\":\"16.000\"},{\"address\":\"长宁区 2 号\",\"code\":\"C002\",\"count\":\"54\",\"date\":\"2026-05-01\",\"id\":\"O-002\",\"lat\":\"31.2132668\",\"lon\":\"121.3609523\",\"name\":\"普通店\",\"orderType\":\"large\",\"priority\":\"normal\",\"prioritySource\":\"mapped\",\"priorityWeight\":\"1\",\"requiredVehicleType\":\"\",\"serviceMin\":\"28\",\"twEnd\":\"17:30\",\"twStart\":\"13:00\",\"volume\":\"2.052\",\"weight\":\"315.000\"}],\"planningDate\":\"2026-05-01\",\"planningMode\":\"SINGLE_DAY\",\"vehicles\":[{\"availableDate\":\"\",\"emissionFactor\":\"0.120000\",\"enabled\":true,\"end\":\"17:30\",\"fixedCost\":\"120.0000\",\"id\":\"V-001\",\"isVirtual\":false,\"maxVolume\":\"5.000\",\"maxWeight\":\"800.000\",\"name\":\"沪AB0001\",\"perKmCost\":\"4.8000\",\"perMinuteCost\":\"0.3500\",\"perStopCost\":\"8.0000\",\"sourceVehicleId\":\"\",\"start\":\"09:00\",\"type\":\"EV-VAN\"},{\"availableDate\":\"2026-05-01\",\"emissionFactor\":\"0.147000\",\"enabled\":true,\"end\":\"02:00\",\"fixedCost\":\"140.0000\",\"id\":\"V-002\",\"isVirtual\":false,\"maxVolume\":\"8.000\",\"maxWeight\":\"1200.000\",\"name\":\"沪AB0002\",\"perKmCost\":\"5.2000\",\"perMinuteCost\":\"0.4000\",\"perStopCost\":\"9.0000\",\"sourceVehicleId\":\"\",\"start\":\"18:00\",\"type\":\"EV-VAN\"}]}",
+        "contentHash": "sha256:81efc709abbb1c7b1d7ccb06ef4486767c3388869e748c40af0a58d72c3fb180",
+        "inputHash": "sha256:57aa34d639c55a30fb0435e669daa4197be3276dcaa8e21fe4b456e6b517085d",
+        "requestHash": "sha256:f1d9d573e3d784d32dbadfd90734fc73a5b02a895afef8031a39c57e63facdbf",
+        "planHash": "sha256:ca9f00af8f2a4f25b8251d764d672448ef33801c0463da31b6f0067ae6f45b67"
+      }
+    }
+  ]
+}

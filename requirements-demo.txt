@@ -1,0 +1,2 @@
+# Optional local optimizer dependency. The web demo runs without it.
+ortools==9.15.6755

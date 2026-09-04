@@ -1,0 +1,194 @@
+{
+  "contractVersion": "stct-planning-contract-v1.3.1",
+  "canonicalVersion": "stct-canonical-json-v2",
+  "appVersion": "v1.4-trust-closure-mission-control",
+  "planningModes": ["SINGLE_DAY", "MULTI_DAY_BATCH"],
+  "objectives": ["service", "vehicles", "distance", "utilization", "cost", "carbon", "balanced_seed"],
+  "singleTrip": true,
+  "hash": {
+    "algorithm": "SHA-256",
+    "prefix": "sha256:"
+  },
+  "distance": {
+    "model": "haversine-road-factor",
+    "coordinateScale": 7,
+    "roadDistanceFactorScale": 4,
+    "roadMetersRounding": "half-up",
+    "travelMinutesRounding": "ceil"
+  },
+  "capacity": {
+    "volumeScale": 1000,
+    "weightScale": 1000,
+    "rounding": "half-up",
+    "missingOrderPolicy": "block-order",
+    "missingVehiclePolicy": "exclude-vehicle"
+  },
+  "time": {
+    "maxWaitingMinutes": 90,
+    "overnightPolicy": "end-before-start-means-next-day",
+    "missingTimeWindowPolicy": "reject-order",
+    "costMinuteBasis": "driving"
+  },
+  "priorityMapping": {
+    "version": "priority-map-v1",
+    "minimum": 1,
+    "maximum": 100,
+    "default": 1,
+    "values": {
+      "high": 3,
+      "medium": 2,
+      "normal": 1
+    },
+    "aliases": {
+      "high": "high",
+      "medium": "medium",
+      "normal": "normal",
+      "HIGH": "high",
+      "MEDIUM": "medium",
+      "NORMAL": "normal",
+      "\u9ad8": "high",
+      "\u9ad8\u4f18\u5148\u7ea7": "high",
+      "\u4e2d": "medium",
+      "\u4e2d\u4f18\u5148\u7ea7": "medium",
+      "\u666e\u901a": "normal",
+      "\u6b63\u5e38": "normal"
+    }
+  },
+  "models": {
+    "costModelVersion": "stct-cost-v1",
+    "emissionModelVersion": "stct-emission-v1",
+    "defaultFixedCost": 120,
+    "defaultPerKmCost": 4.8,
+    "defaultPerMinuteCost": 0.35,
+    "defaultPerStopCost": 8,
+    "defaultEmissionFactor": 0.192
+  },
+  "balancedPoolWeights": {
+    "usedVehicles": 20,
+    "estimatedRoadKm": 20,
+    "totalCost": 20,
+    "totalCO2": 15,
+    "latestEnd": 15,
+    "utilizationScore": 10
+  },
+  "utilization": {
+    "lowRouteThresholdPercent": 35,
+    "scoreWeights": {
+      "fleetUtilization": 35,
+      "averageEffective": 25,
+      "minimumRoute": 20,
+      "stability": 10,
+      "lowRouteShare": 10
+    }
+  },
+  "tolerances": {
+    "distanceMeters": 1,
+    "cost": 0.01,
+    "carbon": 0.001,
+    "utilizationPercent": 0.1,
+    "latestEndMinutes": 0,
+    "coordinate": 0.0000001
+  },
+  "requestSchema": {
+    "allowedTopLevel": ["objective", "timeLimitSeconds", "engineRequested", "searchConfiguration"],
+    "engineRequested": ["ortools", "heuristic"],
+    "searchConfiguration": {
+      "firstSolutionStrategy": {"type": "enum", "values": ["parallel-cheapest-insertion"]},
+      "localSearchMetaheuristic": {"type": "enum", "values": ["guided-local-search"]},
+      "randomSeed": {"type": "integer"},
+      "logSearch": {"type": "boolean"},
+      "servicePolicy": {"type": "enum", "values": ["priority-score-then-assigned-count-then-business-objective"]}
+    }
+  },
+  "canonicalSchemas": {
+    "depot": [
+      {"name": "id", "type": "identifier", "required": true},
+      {"name": "name", "type": "text"},
+      {"name": "address", "type": "optionalText"},
+      {"name": "lon", "type": "number", "scale": 7, "required": true},
+      {"name": "lat", "type": "number", "scale": 7, "required": true}
+    ],
+    "order": [
+      {"name": "id", "type": "identifier", "required": true},
+      {"name": "code", "type": "optionalText"},
+      {"name": "name", "type": "text"},
+      {"name": "address", "type": "optionalText"},
+      {"name": "date", "type": "date", "required": true},
+      {"name": "lon", "type": "number", "scale": 7, "required": true},
+      {"name": "lat", "type": "number", "scale": 7, "required": true},
+      {"name": "count", "type": "integer", "required": true},
+      {"name": "volume", "type": "number", "scale": 3, "required": true},
+      {"name": "weight", "type": "number", "scale": 3, "required": true},
+      {"name": "serviceMin", "type": "integer", "required": true},
+      {"name": "twStart", "type": "time", "required": true},
+      {"name": "twEnd", "type": "time", "required": true},
+      {"name": "priority", "type": "enum", "required": true},
+      {"name": "priorityWeight", "type": "integer", "required": true},
+      {"name": "prioritySource", "type": "enum", "required": true},
+      {"name": "orderType", "type": "optionalText"},
+      {"name": "requiredVehicleType", "type": "optionalText"}
+    ],
+    "vehicle": [
+      {"name": "id", "type": "identifier", "required": true},
+      {"name": "name", "type": "text"},
+      {"name": "type", "type": "optionalText"},
+      {"name": "availableDate", "type": "optionalDate"},
+      {"name": "maxVolume", "type": "number", "scale": 3, "required": true},
+      {"name": "maxWeight", "type": "number", "scale": 3, "required": true},
+      {"name": "start", "type": "time", "required": true},
+      {"name": "end", "type": "time", "required": true},
+      {"name": "fixedCost", "type": "number", "scale": 4, "required": true},
+      {"name": "perKmCost", "type": "number", "scale": 4, "required": true},
+      {"name": "perMinuteCost", "type": "number", "scale": 4, "required": true},
+      {"name": "perStopCost", "type": "number", "scale": 4, "required": true},
+      {"name": "emissionFactor", "type": "number", "scale": 6, "required": true},
+      {"name": "sourceVehicleId", "type": "optionalText"},
+      {"name": "isVirtual", "type": "boolean", "required": true},
+      {"name": "enabled", "type": "boolean", "required": true}
+    ],
+    "constraints": [
+      {"name": "singleTrip", "type": "boolean", "required": true},
+      {"name": "maxWaitingMinutes", "type": "integer", "required": true},
+      {"name": "workStart", "type": "time", "required": true},
+      {"name": "workEnd", "type": "time", "required": true},
+      {"name": "maxOrders", "type": "integer", "required": true},
+      {"name": "maxSolveSeconds", "type": "integer", "required": true},
+      {"name": "allowUnassigned", "type": "boolean", "required": true},
+      {"name": "capacityScale", "type": "integer", "required": true},
+      {"name": "weightScale", "type": "integer", "required": true},
+      {"name": "maxStops", "type": "integer", "required": true},
+      {"name": "maxRouteMinutes", "type": "integer", "required": true},
+      {"name": "shiftExtensionMinutes", "type": "integer", "required": true}
+    ],
+    "assumptions": [
+      {"name": "roadDistanceFactor", "type": "number", "scale": 4, "required": true},
+      {"name": "averageSpeedKmh", "type": "number", "scale": 3, "required": true},
+      {"name": "defaultServiceMin", "type": "integer", "required": true},
+      {"name": "costModelVersion", "type": "enum", "required": true},
+      {"name": "emissionModelVersion", "type": "enum", "required": true},
+      {"name": "priorityMappingVersion", "type": "enum", "required": true},
+      {"name": "missingVehicleDatePolicy", "type": "enum", "required": true},
+      {"name": "missingTimeWindowPolicy", "type": "enum", "required": true},
+      {"name": "overnightPolicy", "type": "enum", "required": true},
+      {"name": "distanceModel", "type": "enum", "required": true},
+      {"name": "roadMetersRounding", "type": "enum", "required": true},
+      {"name": "travelMinutesRounding", "type": "enum", "required": true},
+      {"name": "costMinuteBasis", "type": "enum", "required": true},
+      {"name": "defaultEmissionFactor", "type": "number", "scale": 6, "required": true},
+      {"name": "lowUtilizationThreshold", "type": "number", "scale": 1, "required": true},
+      {"name": "balancedWeightUsedVehicles", "type": "integer", "required": true},
+      {"name": "balancedWeightDistance", "type": "integer", "required": true},
+      {"name": "balancedWeightCost", "type": "integer", "required": true},
+      {"name": "balancedWeightCarbon", "type": "integer", "required": true},
+      {"name": "balancedWeightLatestEnd", "type": "integer", "required": true},
+      {"name": "balancedWeightUtilization", "type": "integer", "required": true}
+    ]
+  },
+  "canonicalOrder": {
+    "scenario": ["contractVersion", "canonicalVersion", "planningMode", "planningDate", "depot", "orders", "vehicles", "constraints", "assumptions"],
+    "contentEnvelope": ["canonicalVersion", "depot", "orders", "vehicles"],
+    "requestEnvelope": ["contractVersion", "canonicalVersion", "inputHash", "objective", "timeLimitSeconds", "engineRequested", "searchConfiguration"],
+    "planEnvelope": ["contractVersion", "canonicalVersion", "inputHash", "parentPlanHash", "routes", "unassignedOrderIds", "blockedOrderIds", "manualRevision"],
+    "route": ["routeId", "vehicleId", "orderIds"]
+  }
+}

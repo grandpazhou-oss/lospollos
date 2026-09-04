@@ -1,4 +1,6 @@
-# 🚚 LOGISTEED Smart Transportation Control Tower - 工作树
+# LEGACY - LOGISTEED Smart Transportation Control Tower 工作树
+
+> 此文件是 v1.0 历史快照，仅为追溯保留，不是当前实现、部署状态或验收依据。当前权威说明见 `README.md`、`optimizer/README.md`、`shared/planning-contract-v13.json` 和 `tests/run_all_v13.sh`。其中“实时追踪”“Netlify 已部署”等历史描述不得视为 v1.3 能力声明。
 
 **项目类型：** 静态 Web 应用 + 地图可视化系统  
 **当前版本：** v1.0 (Beta)  
