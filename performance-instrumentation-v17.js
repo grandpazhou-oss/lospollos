@@ -171,7 +171,7 @@
           applicationUpdateHz: "Count of instrumented application update function calls divided by measured wall-clock duration",
         },
         status: failures.length ? "FAIL" : "PASS", failures, workload, thresholds,
-        startedAtMs: round(startedAtMs), endedAtMs: round(endedAtMs), ...summary,
+        startedAtMs, endedAtMs, ...summary,
         metrics: {
           browserRafHz: summary.rates.browserRafCallbacks,
           executionEventsPerSecond: summary.rates.executionStep,

@@ -46,12 +46,13 @@
     return scenario.vehicles.filter((vehicle) => {
       const startAllowed = vehicle.homeDepotId === depot.depotId || vehicle.allowedStartDepotIds.includes(depot.depotId);
       const typeAllowed = (!allowedTypes.size || allowedTypes.has(vehicle.vehicleTypeId)) && (!order.requiredVehicleTypes.length || order.requiredVehicleTypes.includes(vehicle.vehicleTypeId));
-      return startAllowed && typeAllowed;
+      const available = vehicle.availabilityWindows.some(window => !order.timeWindows.length || order.timeWindows.some(required => overlaps(window, required)));
+      return startAllowed && typeAllowed && available;
     });
   }
   function compatibleDrivers(scenario, depot, order, vehicles) {
     const vehicleTypes = new Set(vehicles.map((vehicle) => vehicle.vehicleTypeId));
-    return scenario.drivers.filter((driver) => driver.homeDepotId === depot.depotId && order.requiredSkills.every((skill) => driver.skills.includes(skill)) && driver.compatibleVehicleTypes.some((type) => vehicleTypes.has(type)));
+    return scenario.drivers.filter((driver) => driver.homeDepotId === depot.depotId && driver.shiftWindows.some(window => !order.timeWindows.length || order.timeWindows.some(required => overlaps(window, required))) && order.requiredSkills.every((skill) => driver.skills.includes(skill)) && driver.compatibleVehicleTypes.some((type) => vehicleTypes.has(type)));
   }
   function roleSupports(depot, order) {
     if (depot.role === "CROSS_DOCK" && !depot.capabilities.includes(order.taskType) && !["TRANSFER_IN", "TRANSFER_OUT"].includes(order.taskType)) return false;

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "stct-supply-chain-profile-catalog-v1.9",
+  "profiles": [
+    {
+      "path": "profiles/uc-2026-acceptance-v19.json"
+    }
+  ]
+}

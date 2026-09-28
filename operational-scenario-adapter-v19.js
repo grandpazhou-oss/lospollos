@@ -1,0 +1,8 @@
+(function(root,factory){const api=factory(typeof module==='object'&&module.exports?require('./operational-validation-contract-v19.js'):root.STCTPlatformV19?.operationalValidationContract);if(typeof module==='object'&&module.exports)module.exports=api;if(root.document)(root.STCTPlatformV19=root.STCTPlatformV19||{}).operationalScenarioAdapter=api;})(globalThis,function(Contract){
+  'use strict';
+  function project(reference){return Object.freeze({schemaVersion:'stct-operational-scenario-adapter-p6',mode:'BRIDGE_AVAILABLE',bridgeStatus:'P6_OPERATIONAL_VALIDATION_BRIDGE_ACTIVE',source:structuredClone(reference),canApply:false,canDispatch:false,canStartExecution:false});}
+  function preflight(source,options){return Contract.preflight(structuredClone(source),structuredClone(options||{}));}
+  function seal(source,options){return Contract.createEnvelope(structuredClone(source),structuredClone(options||{}));}
+  function validationInput(envelope){const checked=Contract.validateEnvelope(envelope);if(checked.status!=='PASS')throw Object.assign(new Error('OPERATIONAL_ENVELOPE_REJECTED'),{code:'OPERATIONAL_ENVELOPE_REJECTED',issues:checked.issues});return Object.freeze({schemaVersion:'stct-command-validation-input-v1.9-p6',sessionKind:'COMMAND_VALIDATION_SESSION',contextId:envelope.envelopeId,envelopeHash:envelope.envelopeHash,scenario:structuredClone(envelope.operationalScenario),resourceProfileHash:envelope.resourceSnapshot.resourceProfileHash,matrixHash:envelope.facilityDemandMatrixHash,canApplyToActiveCommand:false,canStartExecution:false});}
+  return Object.freeze({project,preflight,seal,validationInput});
+});

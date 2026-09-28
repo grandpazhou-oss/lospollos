@@ -1,0 +1,9 @@
+'use strict';
+const assert=require('node:assert/strict'),Data=require('../design-data-adapter-v19.js'),F=require('../facility-location-mvp1-v19.js'),Maps=require('../platform-map-adapters-v19.js'),Command=require('../command-operational-context-v19.js');
+const source=F.fromScenario(Data.createSyntheticStudy({orderCount:24,depotCount:6,vehicleCount:18,seed:1910}).scenario),matrix=F.buildMatrix(source),before=source.studyHash,map=Maps.design(source,matrix,null,'en');
+assert.equal(map.features.filter(f=>f.geometry.type==='Point').length,30);assert.equal(map.features.some(f=>f.properties.kind==='planned'),false);assert.equal(source.studyHash,before);assert.equal(map.provenance.geometry,'RELATION_ONLY');
+const context=Command.createContext(),state=context.snapshot(),model=Maps.command(context,'en');
+const routes=model.features.filter(f=>f.properties.kind==='planned');assert.equal(routes.length,context.basePlan.routes.length);for(const f of routes){const r=context.basePlan.routes.find(r=>r.routeId===f.properties.routeId&&r.vehicleId===f.properties.vehicleId);assert.deepEqual(f.geometry.coordinates,r.geometry);}
+assert.deepEqual(context.snapshot(),state);assert.ok(model.entities.some(e=>e.kind==='alert'));assert.equal(model.provenance.vehicles,'DERIVED_SIMULATION_NOT_GPS');
+const hash=context.workspace.recoveryCandidates()[0].planHash,preview=context.workspace.previewRecovery(hash),applied=context.snapshot().plan.planHash,view=Maps.command(context,'en',preview.candidate);assert.ok(view.features.some(f=>f.properties.kind==='preview'));assert.equal(context.snapshot().plan.planHash,applied);
+console.log(JSON.stringify({suite:'P7_MAP_CONTRACT',status:'PASS',checks:['CANONICAL_POINTS','VIEW_DOES_NOT_MUTATE_INPUT','NO_FAKE_ROAD_ASSIGNMENT','PER_VEHICLE_ROUTE_IDENTITY','SIMULATION_LABEL','DOMAIN_ALERTS','RECOVERY_PREVIEW_READ_ONLY']}));

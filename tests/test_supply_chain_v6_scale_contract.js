@@ -1,0 +1,20 @@
+'use strict';
+const assert = require('node:assert/strict');
+const Design = require('../supply-chain-design-v19.js');
+const Joint = require('../supply-chain-joint-v19.js');
+
+const periods = Array.from({ length: 24 }, (_, i) => `P${i + 1}`);
+const suppliers = Array.from({ length: 30 }, (_, i) => ({ nodeId: `S${i}`, name: `Supplier ${i}`, role: 'SUPPLIER' }));
+const sites = Array.from({ length: 20 }, (_, i) => ({ nodeId: `W${i}`, name: `Site ${i}`, role: 'DC' }));
+const customers = Array.from({ length: 500 }, (_, i) => ({ nodeId: `C${i}`, name: `Customer ${i}`, role: 'CUSTOMER' }));
+const road = (fromNodeId, toNodeId, distanceKm) => ({ fromNodeId, toNodeId, distanceKm, unit: 'km', quality: 'VERIFIED_ROAD', source: 'SYNTHETIC_SCALE_CONTRACT' });
+const rows = customers.flatMap((customer, i) => periods.map(period => ({ demandId: `D${i}`, customerNodeId: customer.nodeId, currentSiteId: `W${i % 20}`, period, quantity: 1, unit: 'm3' })));
+const matrix = [...suppliers.flatMap((supplier, i) => sites.map((site, j) => road(supplier.nodeId, site.nodeId, 1 + i + j))), ...sites.flatMap((site, j) => customers.map((customer, i) => road(site.nodeId, customer.nodeId, 1 + (i + j) % 20)))];
+const raw = { studyId: 'V6-LIMIT-SYNTHETIC', classification: 'SYNTHETIC_TEST', nodes: [...suppliers, ...sites, ...customers], periodDemand: rows, observedInbound: [], distanceRows: matrix, costApplicability: { inventoryHolding: 'NOT_APPLICABLE', transferTransport: 'NOT_APPLICABLE' } };
+const start = performance.now(), study = Design.createStudy(raw), studyMs = performance.now() - start;
+assert.equal(study.periodDemand.length, 12000); assert.equal(study.distanceRows.length, 10600);
+const scenario = { scenarioId: 'SCALE', analysisScope: 'FULL_CHAIN', type: 'NETWORK_CANDIDATE', objective: 'VOLUME_KM', distanceBasis: 'VERIFIED_ROAD', facilityCounts: [10], sourceMode: 'FREE', supplierTotalMode: 'ADJUSTABLE', capacityPolicy: 'UNBOUNDED_SCREENING', homogeneousDemandConfirmed: true, allowAllSupplierSiteEdgesConfirmed: true, maxCandidates: 1, timeLimitSeconds: 5 };
+const buildStart = performance.now(), request = Joint.buildRequest(study, scenario), requestMs = performance.now() - buildStart;
+assert.equal(request.payload.demands.length, 500); assert.equal(request.payload.outboundEdges.length, 10000); assert.equal(request.payload.inboundEdges.length, 600);
+assert.throws(() => Design.createStudy({ ...raw, periodDemand: [...rows, { ...rows[0], demandId: 'D_OVER', customerNodeId: 'C0' }] }), { code: 'NETWORK_ARRAY_LIMIT' });
+console.log(JSON.stringify({ suite: 'SUPPLY_CHAIN_V6_SCALE_CONTRACT', status: 'PASS', synthetic: true, periodRecords: rows.length, directedDistances: matrix.length, outboundEdges: request.payload.outboundEdges.length, inboundEdges: request.payload.inboundEdges.length, createStudyMs: Math.round(studyMs), buildRequestMs: Math.round(requestMs), solve: 'NOT_RUN' }));

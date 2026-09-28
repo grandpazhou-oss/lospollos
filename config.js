@@ -6,7 +6,7 @@
   window.STCT_CONFIG={
     version:'1.4-trust-closure-mission-control',
     productPositioning:'配送路线规划与分析工具',
-    dataFilePath:'./data/routes-data.js',
+    dataFilePath:'./data/routes-data-synthetic-v14.js',
     mapStyleUrl:'https://tiles.openfreemap.org/styles/liberty',
     mapStyles:{
       liberty:'https://tiles.openfreemap.org/styles/liberty',
@@ -16,6 +16,8 @@
     },
     optimizerApiUrl:optimizerOrigin+'/optimize',
     optimizerHealthUrl:optimizerOrigin+'/health',
+    facilityOptimizerApiUrl:optimizerOrigin+'/facility-optimize-v19',
+    expectedOptimizerBuildFingerprint:'e84f61446a4b33675c4c1d6c58704d5b67d53a309aab6107ff82a729a11db872',
     forceHeuristic:['1','true','yes'].includes(String(params.get('forceHeuristic')||'').toLowerCase()),
     roadDistanceFactor:1.35,
     averageSpeedKmh:28,

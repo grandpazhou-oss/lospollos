@@ -15,7 +15,9 @@
   if (!Integrity?.hashValue || !Integrity?.canonicalString) throw new Error("STCT SHA-256 integrity module is required.");
 
   const VERSION = "stct-network-contract-v1.8";
-  const LIMITS = Object.freeze({ maxDepth: 24, maxArrayLength: 5000, maxStringLength: 2048, maxEntities: 5000 });
+  const LIMITS = Object.freeze({ maxDepth: 24, maxArrayLength: 5000, maxSupplyPeriodRows: 12000, maxSupplyMatrixRows: 10600, maxStringLength: 2048, maxEntities: 5000 });
+  const SUPPLY_PERIOD_ARRAY = /(?:^|\.)(?:periodDemand|sourceRows|excludedRows|outbound|inbound|transfer|capacityByPeriod)$/;
+  const SUPPLY_MATRIX_ARRAY = /(?:^|\.)(?:distanceRows|outboundEdges|matrix\.rows|objective\.pairValues)$/;
   const DANGEROUS_KEYS = new Set(["__proto__", "prototype", "constructor"]);
   const HORIZON_MODES = new Set(["SINGLE_DAY", "MULTI_DAY", "MULTI_SHIFT"]);
   const CROSS_MIDNIGHT = new Set(["ALLOW", "FORBID", "EXPLICIT_NEXT_DAY"]);
@@ -58,7 +60,8 @@
   function list(value, field) {
     if (value === undefined) return [];
     if (!Array.isArray(value)) fail("NETWORK_TYPE_ERROR", `${field} must be an array.`, { field });
-    if (value.length > LIMITS.maxArrayLength) fail("NETWORK_ARRAY_LIMIT", `${field} exceeds the array limit.`, { field, length: value.length });
+    const maximum = SUPPLY_PERIOD_ARRAY.test(field) ? LIMITS.maxSupplyPeriodRows : SUPPLY_MATRIX_ARRAY.test(field) ? LIMITS.maxSupplyMatrixRows : LIMITS.maxArrayLength;
+    if (value.length > maximum) fail("NETWORK_ARRAY_LIMIT", `${field} exceeds the array limit.`, { field, length: value.length, maximum });
     return value;
   }
   function stringList(value, field) { return list(value, field).map((item, index) => text(item, `${field}[${index}]`, { maxLength: 256 })); }
@@ -140,7 +143,7 @@
       dataClassification: text(input.dataClassification, "dataClassification", { maxLength: 32 }),
       planningHorizon: planningHorizon(input.planningHorizon),
     };
-    if (scenario.dataClassification !== "SYNTHETIC") fail("NETWORK_DATA_CLASSIFICATION", "Only SYNTHETIC network fixtures are accepted by this local demo contract.");
+    if (!["SYNTHETIC", "ANONYMIZED", "PERSONAL", "CONFIDENTIAL"].includes(scenario.dataClassification)) fail("NETWORK_DATA_CLASSIFICATION", "An explicit supported data classification is required; classification does not authorize external providers.");
     scenario.depots = entities(input.depots, "depots", "depotId", (row, index) => {
       const role = text(row.role, `depots[${index}].role`, { maxLength: 32 });
       if (!DEPOT_ROLES.has(role)) fail("NETWORK_DEPOT_ROLE", "Unsupported depot role.", { role });

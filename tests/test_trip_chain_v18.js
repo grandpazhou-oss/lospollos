@@ -98,7 +98,7 @@ const maintenancePlan = Trip.planTrips(maintenance, { maxStopsPerTrip: 1, startT
 check("T0231", maintenancePlan.trips.length === 0 && maintenancePlan.unassigned[0].reasonCode === "VEHICLE_UNAVAILABLE", maintenancePlan.unassigned, "maintenance window enforced", true);
 const unavailable = oneDepot(1, 1); unavailable.vehicles[0].availabilityWindows = [];
 const unavailablePlan = Trip.planTrips(unavailable, { maxStopsPerTrip: 1 });
-check("T0232", unavailablePlan.trips.length === 0 && unavailablePlan.unassigned[0].reasonCode === "VEHICLE_UNAVAILABLE", unavailablePlan.unassigned, "unavailable vehicle excluded", true);
+check("T0232", unavailablePlan.trips.length === 0 && unavailablePlan.unassigned.length === 1 && unavailablePlan.unassigned[0].orderId === unavailable.orders[0].orderId && unavailablePlan.unassigned[0].reasonCode === "REQUIRED_VEHICLE_UNAVAILABLE" && unavailablePlan.unassigned[0].stage === "DEPOT_ASSIGNMENT", unavailablePlan.unassigned, "unavailable vehicle excluded", true);
 const emptyTrip = clone(three); emptyTrip.trips[0].orderIds = [];
 check("T0233", Trip.verifyTripPlan(threeSource, emptyTrip).issues.includes("EMPTY_TRIP"), Trip.verifyTripPlan(threeSource, emptyTrip).issues, "empty trip rejected", true);
 const noStop = clone(three); noStop.routes[0].stops = [];

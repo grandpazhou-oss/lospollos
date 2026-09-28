@@ -65,7 +65,10 @@ function gateO1() {
   record("OVN-0007", progress.coreRequirements.total === 1067 && progress.overnightRequirements.total === 1752, [progress.coreRequirements.total, progress.overnightRequirements.total], [1067, 1752]);
   record("OVN-0008", [progress.coreRequirements, progress.overnightRequirements].every((row) => ["passed", "failed", "skipped", "blocked"].every((key) => Number.isInteger(row[key]))), progress.overnightRequirements, "passed failed skipped blocked counts");
   record("OVN-0009", Boolean(progress.nextResumableAction), progress.nextResumableAction, "non-empty next action");
-  record("OVN-0010", progress.stopConditions.length === 1, progress.stopConditions.length, "resume does not repeat setup or erase prior incident");
+  const stopConditions = progress.stopConditions;
+  const recoveryRetained = stopConditions[0] === "RECOVERED_AFTER_OS_RESTART_VOLATILE_EVIDENCE_LOSS";
+  const deferredSoakOnly = stopConditions.length === 1 || (stopConditions.length === 2 && stopConditions[1] === "USER_DEFERRED_FORMAL_SOAK" && progress.checkpointSequence >= 6);
+  record("OVN-0010", recoveryRetained && deferredSoakOnly && new Set(stopConditions).size === stopConditions.length, stopConditions, "resume retains recovery event; optional explicit user-deferred soak is recorded once");
   record("OVN-0011", sourceReplay.status === "PASS", sourceReplay.status, "working source revalidated");
   record("OVN-0012", resumeCheck(false, true) === "CHECKPOINT_WORKTREE_MISMATCH", resumeCheck(false, true), "CHECKPOINT_WORKTREE_MISMATCH");
   record("OVN-0013", resumeCheck(true, false) === "CHECKPOINT_ARTIFACT_MISSING", resumeCheck(true, false), "CHECKPOINT_ARTIFACT_MISSING");

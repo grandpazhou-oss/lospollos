@@ -182,6 +182,8 @@
   }
 
   window.STCTMap = { install, refreshSources, applyColorMode, applyVisibility, previewPlan, state, usableMap };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", install); else install();
+  if (!window.STCT_V8_PLATFORM_ENTRY) {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", install); else install();
+  }
   window.addEventListener("stct:data-applied", () => setTimeout(() => { refreshSources(); applyColorMode(); }, 120));
 })();

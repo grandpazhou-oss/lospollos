@@ -9,10 +9,12 @@ const Layers = require("../map-layer-registry-v16.js");
 const root = path.resolve(__dirname, ".."); const checks = [];
 function check(name, condition, detail = {}) { assert(condition, `${name}: ${JSON.stringify(detail)}`); checks.push({ name, status: "PASS", detail }); }
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-const expectedScripts = ["road-network-fixture-v16.js", "road-routing-v16.js", "routing-provenance-v16.js", "routing-provider-registry-v16.js", "execution-twin-v16.js", "execution-store-v16.js", "plan-vs-actual-v16.js", "operations-alerts-v16.js", "offline-queue-v16.js", "driver-simulator-v16.js", "dynamic-operations-capsule-v16.js", "experience-ui-v16.js"];
+const expectedScripts = ["road-network-fixture-v16.js", "road-routing-v16.js", "routing-provenance-v16.js", "routing-provider-registry-v16.js", "execution-twin-v16.js", "execution-store-v16.js", "plan-vs-actual-v16.js", "operations-alerts-v16.js", "offline-queue-v16.js", "dynamic-operations-capsule-v16.js", "experience-ui-v16.js", "driver-simulator-v16.js"];
 check("index-single-close", (html.match(/<\/body><\/html>/g) || []).length === 1);
 check("index-v16-entry", html.includes("data-v16-open") && html.includes("experience-v16.css"));
-check("index-v16-scripts", expectedScripts.every((file) => html.includes(`./${file}?v=1.6.0`)), expectedScripts);
+const scriptSources = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)].map((match) => match[1]);
+check("index-v16-scripts", expectedScripts.every((file) => scriptSources.filter((src) => src.split("?")[0] === `./${file}`).length === 1 && fs.existsSync(path.join(root, file))), expectedScripts);
+check("index-driver-projection-dependency", html.indexOf("driver-local-projection-v17.js") >= 0 && html.indexOf("driver-local-projection-v17.js") < html.indexOf("driver-simulator-v16.js"));
 check("index-script-order", expectedScripts.every((file, index) => index === 0 || html.indexOf(expectedScripts[index - 1]) < html.indexOf(file)));
 const registry = Layers.createRegistry(); const registered = registry.registerAll("STATIC_TEST");
 check("map-layer-count", registered.length === 12 && registry.count() === 12);

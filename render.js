@@ -398,7 +398,7 @@
     const adapters = { renderOptimizer, renderAnalysis, renderCarbon, renderUpload: base.renderUpload, renderCost, renderReport, renderAllDashboards };
     window.STCTCore?.installRenderers?.(adapters);
     window.STCTRender = { install, renderOptimizer, renderAnalysis, renderCarbon, renderCost, renderReport, renderAllDashboards };
-    renderAllDashboards();
+    if (!window.STCT_V8_PLATFORM_ENTRY) renderAllDashboards();
   }
 
   window.addEventListener("stct:planning-state", () => {

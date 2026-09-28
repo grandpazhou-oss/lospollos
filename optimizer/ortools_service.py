@@ -9,18 +9,23 @@ import math
 import os
 import platform
 import time
+import uuid
+from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
+from urllib.parse import urlsplit, parse_qs
 
 try:
     import ortools as ortools_package
     from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+    from ortools.sat.python import cp_model
 except Exception:
     ortools_package = None
     pywrapcp = None
     routing_enums_pb2 = None
+    cp_model = None
 
 try:
     from canonical_contract import CONTRACT, CanonicalError, plan_identity, request_identity, scenario_identity
@@ -33,6 +38,21 @@ try:
 except ImportError:
     from optimizer.rolling_solver_v16 import RollingSolveError, solve_rolling
     from optimizer.routing_contract_v16 import RoutingContractError
+
+try:
+    from facility_mvp1 import FacilityError, solve_facility
+except ImportError:
+    from optimizer.facility_mvp1 import FacilityError, solve_facility
+
+try:
+    from supply_chain_joint_v19 import SupplyChainSolveError, solve_joint
+except ImportError:
+    from optimizer.supply_chain_joint_v19 import SupplyChainSolveError, solve_joint
+
+try:
+    from supply_chain_jobs_v6 import JOBS, JobError
+except ImportError:
+    from optimizer.supply_chain_jobs_v6 import JOBS, JobError
 
 if os.environ.get("DISABLE_ORTOOLS", "").strip().lower() in {"1", "true", "yes"}:
     pywrapcp = None
@@ -74,6 +94,18 @@ def utc_now() -> str:
 
 
 STARTED_AT = utc_now()
+INSTANCE_ID = uuid.uuid4().hex
+_BUILD_FILES = ("ortools_service.py", "canonical_contract.py", "facility_mvp1.py", "supply_chain_joint_v19.py", "supply_chain_jobs_v6.py")
+BUILD_FINGERPRINT = hashlib.sha256(b"".join(
+    name.encode("utf-8") + b"\0" + (Path(__file__).parent / name).read_bytes()
+    for name in _BUILD_FILES
+)).hexdigest()
+SUPPLY_PROTOCOL_VERSION = "stct-supply-chain-jobs-v6"
+SUPPLY_MODEL_VERSION = "v6-cp-sat-1"
+
+
+def job_identity(body: dict) -> dict:
+    return {**body, "backendInstanceId": INSTANCE_ID, "backendBuildFingerprint": BUILD_FINGERPRINT}
 
 
 def round_half_up_int(value: Any) -> int:
@@ -1048,11 +1080,24 @@ def solve(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _local_origin(self) -> bool:
+        host = urlsplit("http://" + self.headers.get("Host", "")).hostname
+        if host not in {"127.0.0.1", "localhost"}:
+            return False
+        origin = self.headers.get("Origin")
+        if not origin or origin == "null":
+            return True
+        parsed = urlsplit(origin)
+        return parsed.scheme in {"http", "https"} and parsed.hostname in {"127.0.0.1", "localhost"} and not parsed.username and not parsed.password
+
     def _send(self, status: int, body: dict[str, Any]) -> None:
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin")
+        if origin and self._local_origin():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Content-Length", str(len(encoded)))
@@ -1060,11 +1105,25 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_OPTIONS(self) -> None:
+        if not self._local_origin():
+            self._send(403, {"error": {"code": "LOCAL_ORIGIN_REQUIRED", "details": {}}})
+            return
         self._send(200, {"ok": True})
 
     def do_GET(self) -> None:
+        if not self._local_origin():
+            self._send(403, {"error": {"code": "LOCAL_ORIGIN_REQUIRED", "details": {}}})
+            return
+        if self.path.startswith("/supply-chain-jobs-v6/"):
+            try:
+                parsed = urlsplit(self.path)
+                self._send(200, job_identity(JOBS.get(parsed.path.split("/")[2], parse_qs(parsed.query).get("results") == ["1"])))
+            except JobError as exc:
+                self._send(exc.status, {"error": {"code": exc.code, "details": {}}})
+            return
         if self.path.startswith("/health"):
             available = pywrapcp is not None
+            supply_ready = available and cp_model is not None
             self._send(200, {
                 "ok": True,
                 "available": available,
@@ -1081,16 +1140,44 @@ class Handler(BaseHTTPRequestHandler):
                 "platform": platform.platform(),
                 "maxSolveSeconds": MAX_SOLVE_SECONDS,
                 "maxOrders": MAX_ORDERS,
+                "supplyChainJobsV6": True,
                 "startedAt": STARTED_AT,
+                "endpoint": f"http://{self.server.server_address[0]}:{self.server.server_address[1]}",
+                "instanceId": INSTANCE_ID,
+                "buildFingerprint": BUILD_FINGERPRINT,
+                "buildFiles": list(_BUILD_FILES),
+                "protocolVersion": SUPPLY_PROTOCOL_VERSION,
+                "modelVersion": SUPPLY_MODEL_VERSION,
+                "capabilities": ["FACILITY", "SUPPLY_CHAIN_JOBS_V6", "UPSTREAM_ONLY", "FULL_CHAIN", "QUANTITY_SCALE_V2"] if supply_ready else [],
+                "dependencies": {"ortools": available, "cpSat": cp_model is not None, "supplyChainReady": supply_ready},
             })
         else:
             self._send(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found", "details": {}}})
 
     def do_POST(self) -> None:
-        if not self.path.startswith("/optimize") and not self.path.startswith("/reoptimize-v16"):
+        if not self._local_origin():
+            self._send(403, {"error": {"code": "LOCAL_ORIGIN_REQUIRED", "details": {}}})
+            return
+        if self.path == "/supply-chain-jobs-v6" or self.path.startswith("/supply-chain-jobs-v6/"):
+            try:
+                if self.path.endswith("/cancel"):
+                    self._send(200, job_identity(JOBS.cancel(self.path.split("/")[2])))
+                    return
+                length = int(self.headers.get("Content-Length", "0"))
+                if self.path != "/supply-chain-jobs-v6" or not 0 < length <= 20_000_000:
+                    raise JobError("SUPPLY_JOB_SPEC_INVALID")
+                if pywrapcp is None or cp_model is None:
+                    raise JobError("ORTOOLS_UNAVAILABLE", 503)
+                self._send(202, job_identity(JOBS.start(json.loads(self.rfile.read(length).decode("utf-8")))))
+            except JobError as exc:
+                self._send(exc.status, {"error": {"code": exc.code, "details": {}}})
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                self._send(400, {"error": {"code": "SUPPLY_JOB_SPEC_INVALID", "details": {}}})
+            return
+        if not self.path.startswith("/optimize") and not self.path.startswith("/reoptimize-v16") and not self.path.startswith("/facility-optimize-v19") and not self.path.startswith("/supply-chain-optimize-v19"):
             self._send(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found", "details": {}}})
             return
-        if pywrapcp is None:
+        if pywrapcp is None or ((self.path.startswith("/facility-optimize-v19") or self.path.startswith("/supply-chain-optimize-v19")) and cp_model is None):
             if self.path.startswith("/reoptimize-v16"):
                 self._send(503, {"ok": False, "engine": "OR-Tools", "availability": "SKIPPED_DEPENDENCY", "error": {"code": "ORTOOLS_UNAVAILABLE", "message": "Full reoptimization is unavailable because the local OR-Tools dependency is not available.", "details": {}}})
             else:
@@ -1101,6 +1188,12 @@ class Handler(BaseHTTPRequestHandler):
             if length <= 0 or length > 20_000_000:
                 raise ValueError("Request body is empty or exceeds the local demo limit.")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if self.path.startswith("/supply-chain-optimize-v19"):
+                self._send(200, solve_joint(payload, cp_model, getattr(ortools_package, "__version__", "unknown")))
+                return
+            if self.path.startswith("/facility-optimize-v19"):
+                self._send(200, solve_facility(payload, cp_model, getattr(ortools_package, "__version__", "unknown")))
+                return
             if self.path.startswith("/reoptimize-v16"):
                 result = solve_rolling(
                     payload,
@@ -1142,6 +1235,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "engine": "OR-Tools", "error": {"code": exc.code, "message": str(exc), "details": exc.details}})
         except (RollingSolveError, RoutingContractError) as exc:
             self._send(400, {"ok": False, "engine": "OR-Tools", "error": {"code": exc.code, "message": str(exc), "details": getattr(exc, "detail", None) or {}}})
+        except FacilityError as exc:
+            self._send(400, {"ok": False, "engine": "OR-Tools CP-SAT", "error": {"code": exc.code, "message": str(exc), "details": exc.detail}})
+        except SupplyChainSolveError as exc:
+            self._send(400, {"ok": False, "engine": "OR-Tools CP-SAT", "error": {"code": exc.code, "message": str(exc), "details": exc.detail}})
         except ValueError as exc:
             self._send(400, {"ok": False, "engine": "OR-Tools", "error": {"code": "INVALID_REQUEST", "message": str(exc), "details": {}}})
         except Exception as exc:

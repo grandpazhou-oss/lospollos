@@ -93,7 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
       el.value = lang;
       el.addEventListener("change", (e) => {
         if (typeof applyLanguage === "function") applyLanguage(e.target.value);
-        if (typeof renderAllDashboards === "function") renderAllDashboards();
+        if (!window.STCT_V8_PLATFORM_ENTRY && typeof renderAllDashboards === "function") renderAllDashboards();
         if (typeof applyLanguage === "function") applyLanguage(e.target.value);
       });
     }
@@ -4723,8 +4723,16 @@ function switchView(id) {
       setTimeout(() => showRouteDetail(state.route), 140);
     }
   }
-  renderAllDashboards();
-  if (typeof applyLanguage === "function") applyLanguage(currentLang);
+  if (id !== "platformRouteView" || !window.STCT_V8_PLATFORM_ENTRY) {
+    if (!legacyDashboardReady) {
+      updateControls();
+      updateMetrics();
+      syncDashboardControls();
+      legacyDashboardReady = true;
+    }
+    renderAllDashboards();
+    if (typeof applyLanguage === "function") applyLanguage(currentLang);
+  }
 }
 document.querySelectorAll(".navbtn[data-view]").forEach((btn) =>
   btn.addEventListener("click", () => switchView(btn.dataset.view))
@@ -4809,14 +4817,17 @@ document.getElementById("carbonDistance")?.addEventListener("change", (e) => {
   dashState.carbonDistance = e.target.value;
   renderCarbon();
 });
-updateControls();
-updateMetrics();
-syncDashboardControls();
-renderAllDashboards();
+let legacyDashboardReady = !window.STCT_V8_PLATFORM_ENTRY;
+if (legacyDashboardReady) {
+  updateControls();
+  updateMetrics();
+  syncDashboardControls();
+  renderAllDashboards();
+}
 let map = null, depotMarker = null;
 const forceNoWebGL = new URLSearchParams(window.location.search).get("noWebGL") === "1";
 const hasMapLibre = Boolean(
-  !forceNoWebGL && window.maplibregl && typeof maplibregl.Map === "function",
+  !window.STCTPlatformV19?.mapRuntime && !forceNoWebGL && window.maplibregl && typeof maplibregl.Map === "function",
 );
 let mapInitError = null;
 if (hasMapLibre) {
@@ -5387,11 +5398,13 @@ document.getElementById("routeWidthRange")?.addEventListener("input", (e) => {
 syncMapOptionControls();
 window.addEventListener("load", () => {
   try {
-    updateControls();
-    updateMetrics();
-    syncDashboardControls();
-    renderAllDashboards();
-    refreshMap();
+    if (!window.STCT_V8_PLATFORM_ENTRY) {
+      updateControls();
+      updateMetrics();
+      syncDashboardControls();
+      renderAllDashboards();
+      refreshMap();
+    }
     if (window.__AUTH_OK) {
       window.__loginNow &&
         setTimeout(

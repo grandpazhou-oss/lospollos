@@ -6,11 +6,17 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-global.window = {};
+const root = path.resolve(__dirname, "..");
+global.window = { crypto: globalThis.crypto };
+vm.runInThisContext(fs.readFileSync(path.join(root, "canonical.js"), "utf8"), { filename: "canonical.js" });
+const contract = JSON.parse(fs.readFileSync(path.join(root, "shared/planning-contract-v13.json"), "utf8"));
+window.STCTCanonical.configure(contract);
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, "..", "verifier.js"), "utf8"), { filename: "verifier.js" });
 const verifier = window.STCTVerifier;
 
 const scenario = {
+  contractVersion: contract.contractVersion,
+  canonicalVersion: contract.canonicalVersion,
   scenarioId: "SCN-VERIFIER-FIXTURE",
   inputHash: "fixture-verifier-hash",
   planningDate: "2026-01-01",
@@ -48,8 +54,11 @@ function feature(orderId, routeId, vehicleId, seq) {
   };
 }
 
-function candidate(name, routes, requestedGoal) {
+async function candidate(name, routes, requestedGoal) {
   const skeleton = {
+    contractVersion: scenario.contractVersion,
+    canonicalVersion: scenario.canonicalVersion,
+    engine: "Demo Heuristic",
     scenarioId: scenario.scenarioId,
     inputHash: scenario.inputHash,
     routes: routes.map((route) => ({ routeId: route.routeId, vehicleId: route.vehicleId, color: "#2563eb" })),
@@ -66,10 +75,12 @@ function candidate(name, routes, requestedGoal) {
   recomputed.meta = { ...recomputed.meta, requestedGoal, goal: requestedGoal, sourceName: name };
   recomputed.scenarioId = scenario.scenarioId;
   recomputed.inputHash = scenario.inputHash;
+  recomputed.planHash = (await window.STCTCanonical.planIdentity(scenario.inputHash, { routes: routes.map((route) => ({ routeId: route.routeId, vehicleId: route.vehicleId, orderIds: route.orders })), unassignedOrderIds: [], blockedOrderIds: [], manualRevision: 0, parentPlanHash: "" })).planHash;
   return recomputed;
 }
 
-const sourcePlans = [
+async function main() {
+const sourcePlans = await Promise.all([
   candidate("high-one", [{ routeId: "R-HIGH", vehicleId: "V-HIGH", orders: ["A", "B", "C"] }], "vehicles"),
   candidate("low-one", [{ routeId: "R-LOW", vehicleId: "V-LOW", orders: ["A", "B", "C"] }], "cost"),
   candidate("mid-one-reordered", [{ routeId: "R-MID", vehicleId: "V-MID", orders: ["B", "A", "C"] }], "distance"),
@@ -77,9 +88,9 @@ const sourcePlans = [
     { routeId: "R-S1", vehicleId: "V-LOW", orders: ["A", "B"] },
     { routeId: "R-S2", vehicleId: "V-MID", orders: ["C"] },
   ], "utilization"),
-];
+]);
 
-const ranked = verifier.rankCandidatePool(sourcePlans, scenario);
+const ranked = await verifier.rankCandidatePool(sourcePlans, scenario);
 assert.strictEqual(ranked.invariant.status, "PASS");
 assert(ranked.candidates.length >= 4);
 assert(ranked.candidates.every((plan) => plan.verification.status === "PASS"));
@@ -104,21 +115,21 @@ Object.entries(checks).forEach(([label, [metric, chooser, tolerance]]) => {
 });
 
 const metricTamper = JSON.parse(JSON.stringify(sourcePlans[0]));
-metricTamper.metrics.totalDistance += 10;
-assert.strictEqual(verifier.verify(metricTamper, scenario).status, "FAIL");
-assert.strictEqual(verifier.verify(metricTamper, scenario).metricMismatchCount, 1);
+metricTamper.metrics.estimatedRoadKm += 10;
+assert.strictEqual((await verifier.verify(metricTamper, scenario)).status, "FAIL");
+assert.strictEqual((await verifier.verify(metricTamper, scenario)).metricMismatchCount, 1);
 
 const depotTamper = JSON.parse(JSON.stringify(sourcePlans[0]));
 depotTamper.routeGeoJson.features[0].geometry.coordinates[0] = [121, 31];
-assert(verifier.verify(depotTamper, scenario).violations.some((row) => row.code === "DEPOT_ROUND_TRIP_MISMATCH"));
+assert((await verifier.verify(depotTamper, scenario)).violations.some((row) => row.code === "ROUTE_DEPOT_MISMATCH"));
 
 const dateTamper = JSON.parse(JSON.stringify(scenario));
 dateTamper.vehicles[0].availableDate = "2026-01-02";
-assert(verifier.verify(sourcePlans[0], dateTamper).violations.some((row) => row.code === "VEHICLE_DATE_MISMATCH"));
+assert((await verifier.verify(sourcePlans[0], dateTamper)).violations.some((row) => row.code === "VEHICLE_NOT_AVAILABLE_ON_DATE"));
 
 const duplicateTamper = JSON.parse(JSON.stringify(sourcePlans[0]));
 duplicateTamper.blockedOrders.push({ id: "A", reasonCode: "INVALID_DEMAND" });
-assert(verifier.verify(duplicateTamper, scenario).violations.some((row) => row.code === "DUPLICATE_ASSIGNMENT"));
+assert((await verifier.verify(duplicateTamper, scenario)).violations.some((row) => row.code === "ORDER_SET_CONSERVATION_FAILED"));
 
 const adequacy = verifier.fleetAdequacy({
   ...scenario,
@@ -138,3 +149,6 @@ console.log(JSON.stringify({
   goalLinks: ranked.goalLinks,
   objectiveChecks: Object.keys(checks),
 }, null, 2));
+
+}
+main().catch((error) => { console.error(error); process.exitCode = 1; });

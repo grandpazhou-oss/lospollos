@@ -1,0 +1,773 @@
+{
+  "schemaVersion": "stct-supply-chain-import-profile-v19",
+  "profileId": "UC_2026_JAN_JUL_ACCEPTANCE",
+  "name": "UC observed network January to July 2026",
+  "sourceWorkbookSha256": "b463c8f26413d7b2fb6f2bcefa68930eae83c5ce263d6802949019c663b3f63e",
+  "staticNodes": [
+    {
+      "nodeId": "UC:EXTERNAL:外协加工",
+      "role": "EXTERNAL_SOURCE",
+      "name": "外协加工",
+      "address": null,
+      "coordinate": null,
+      "coordinateSystem": null
+    }
+  ],
+  "blocks": [
+    {
+      "sheet": "①UC工场及LCN的DC据点地址",
+      "kind": "NODE",
+      "startRow": 3,
+      "endRow": 6,
+      "headerRows": [
+        1,
+        2
+      ],
+      "fields": {
+        "nodeId": {
+          "column": 2,
+          "prefix": "UC:DC:"
+        },
+        "name": 2,
+        "address": 3,
+        "coordinate": 4
+      },
+      "constants": {
+        "role": "DC",
+        "coordinateSystem": "UNCONFIRMED"
+      },
+      "requiredFields": [
+        "nodeId",
+        "name",
+        "address",
+        "coordinate"
+      ]
+    },
+    {
+      "sheet": "①UC工场及LCN的DC据点地址",
+      "kind": "NODE",
+      "startRow": 7,
+      "endRow": 7,
+      "headerRows": [
+        1,
+        2
+      ],
+      "fields": {
+        "nodeId": {
+          "column": 2,
+          "prefix": "UC:TRANSFER:"
+        },
+        "name": 2,
+        "address": 3,
+        "coordinate": 4
+      },
+      "constants": {
+        "role": "TRANSFER",
+        "coordinateSystem": "UNCONFIRMED"
+      },
+      "requiredFields": [
+        "nodeId",
+        "name",
+        "address",
+        "coordinate"
+      ]
+    },
+    {
+      "sheet": "①UC工场及LCN的DC据点地址",
+      "kind": "NODE",
+      "startRow": 11,
+      "endRow": 13,
+      "headerRows": [
+        9,
+        10
+      ],
+      "fields": {
+        "nodeId": {
+          "column": 2,
+          "prefix": "UC:FACTORY:"
+        },
+        "name": 2,
+        "address": 3,
+        "coordinate": 4
+      },
+      "constants": {
+        "role": "FACTORY",
+        "coordinateSystem": "UNCONFIRMED"
+      },
+      "requiredFields": [
+        "nodeId",
+        "name",
+        "address",
+        "coordinate"
+      ]
+    },
+    {
+      "sheet": "②外部入库数据",
+      "kind": "OBSERVED_INBOUND",
+      "startRow": 4,
+      "endRow": 15,
+      "headerRows": [
+        1,
+        2,
+        3
+      ],
+      "fields": {
+        "flowId": {
+          "column": 3,
+          "prefix": "UC:INBOUND:"
+        },
+        "fromNodeId": {
+          "column": 3,
+          "map": {
+            "上海至天津": "UC:FACTORY:上海三工场",
+            "扬州至天津": "UC:FACTORY:扬州工场",
+            "外协加工至天津": "UC:EXTERNAL:外协加工",
+            "上海至沈阳": "UC:FACTORY:上海三工场",
+            "扬州至沈阳": "UC:FACTORY:扬州工场",
+            "天津至沈阳": "UC:FACTORY:天津",
+            "上海至西安": "UC:FACTORY:上海三工场",
+            "扬州至西安": "UC:FACTORY:扬州工场",
+            "天津至西安": "UC:FACTORY:天津",
+            "上海至东莞": "UC:FACTORY:上海三工场",
+            "扬州至东莞": "UC:FACTORY:扬州工场",
+            "天津至东莞": "UC:FACTORY:天津"
+          }
+        },
+        "toNodeId": {
+          "column": 2,
+          "fillDown": true,
+          "map": {
+            "天津": "UC:DC:天津",
+            "沈阳": "UC:DC:沈阳",
+            "西安": "UC:DC:西安",
+            "东莞": "UC:DC:东莞"
+          }
+        },
+        "statedTotal": 5
+      },
+      "periodColumns": [
+        {
+          "period": "2026-01",
+          "column": 8,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-01",
+          "column": 9,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-02",
+          "column": 10,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-02",
+          "column": 11,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-03",
+          "column": 12,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-03",
+          "column": 13,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-04",
+          "column": 14,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-04",
+          "column": 15,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-05",
+          "column": 16,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-05",
+          "column": 17,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-06",
+          "column": 18,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-06",
+          "column": 19,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-07",
+          "column": 20,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-07",
+          "column": 21,
+          "measure": "volume",
+          "unit": "m3"
+        }
+      ],
+      "primaryMeasure": "volume",
+      "requiredFields": [
+        "flowId",
+        "fromNodeId",
+        "toNodeId",
+        "statedTotal"
+      ]
+    },
+    {
+      "sheet": "③天津销售出库",
+      "kind": "PERIOD_DEMAND",
+      "startRow": 4,
+      "endRow": 161,
+      "headerRows": [
+        1,
+        2,
+        3
+      ],
+      "fields": {
+        "demandId": {
+          "column": 1,
+          "prefix": "UC:TJ:DEMAND:"
+        },
+        "customerNodeId": {
+          "column": 1,
+          "prefix": "UC:TJ:CUSTOMER:"
+        },
+        "customerName": 3,
+        "customerAddress": 4,
+        "coordinate": 5,
+        "currentSiteId": {
+          "constant": "UC:DC:天津"
+        },
+        "statedTotal": 7
+      },
+      "periodColumns": [
+        {
+          "period": "2026-01",
+          "column": 10,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-01",
+          "column": 11,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-02",
+          "column": 12,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-02",
+          "column": 13,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-03",
+          "column": 14,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-03",
+          "column": 15,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-04",
+          "column": 16,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-04",
+          "column": 17,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-05",
+          "column": 18,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-05",
+          "column": 19,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-06",
+          "column": 20,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-06",
+          "column": 21,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-07",
+          "column": 22,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-07",
+          "column": 23,
+          "measure": "volume",
+          "unit": "m3"
+        }
+      ],
+      "primaryMeasure": "volume",
+      "constants": {
+        "coordinateSystem": "UNCONFIRMED"
+      },
+      "requiredFields": [
+        "demandId",
+        "customerNodeId",
+        "customerName",
+        "customerAddress",
+        "coordinate",
+        "currentSiteId",
+        "statedTotal"
+      ]
+    },
+    {
+      "sheet": "④西安销售出库",
+      "kind": "PERIOD_DEMAND",
+      "startRow": 4,
+      "endRow": 42,
+      "headerRows": [
+        1,
+        2,
+        3
+      ],
+      "fields": {
+        "demandId": {
+          "column": 1,
+          "prefix": "UC:XA:DEMAND:"
+        },
+        "customerNodeId": {
+          "column": 1,
+          "prefix": "UC:XA:CUSTOMER:"
+        },
+        "customerName": 3,
+        "customerAddress": 4,
+        "coordinate": 5,
+        "currentSiteId": {
+          "constant": "UC:DC:西安"
+        },
+        "statedTotal": 7
+      },
+      "periodColumns": [
+        {
+          "period": "2026-01",
+          "column": 10,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-01",
+          "column": 11,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-02",
+          "column": 12,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-02",
+          "column": 13,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-03",
+          "column": 14,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-03",
+          "column": 15,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-04",
+          "column": 16,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-04",
+          "column": 17,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-05",
+          "column": 18,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-05",
+          "column": 19,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-06",
+          "column": 20,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-06",
+          "column": 21,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-07",
+          "column": 22,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-07",
+          "column": 23,
+          "measure": "volume",
+          "unit": "m3"
+        }
+      ],
+      "primaryMeasure": "volume",
+      "constants": {
+        "coordinateSystem": "UNCONFIRMED"
+      },
+      "requiredFields": [
+        "demandId",
+        "customerNodeId",
+        "customerName",
+        "customerAddress",
+        "coordinate",
+        "currentSiteId",
+        "statedTotal"
+      ],
+      "excludeRows": [
+        {
+          "rowNumber": 42,
+          "reasonCode": "SOURCE_SUMMARY_ROW"
+        }
+      ]
+    },
+    {
+      "sheet": "⑤沈阳销售出库",
+      "kind": "PERIOD_DEMAND",
+      "startRow": 4,
+      "endRow": 48,
+      "headerRows": [
+        1,
+        2,
+        3
+      ],
+      "fields": {
+        "demandId": {
+          "column": 1,
+          "prefix": "UC:SY:DEMAND:"
+        },
+        "customerNodeId": {
+          "column": 1,
+          "prefix": "UC:SY:CUSTOMER:"
+        },
+        "customerName": 3,
+        "customerAddress": 4,
+        "coordinate": 5,
+        "currentSiteId": {
+          "constant": "UC:DC:沈阳"
+        },
+        "statedTotal": 7
+      },
+      "periodColumns": [
+        {
+          "period": "2026-01",
+          "column": 10,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-01",
+          "column": 11,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-02",
+          "column": 12,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-02",
+          "column": 13,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-03",
+          "column": 14,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-03",
+          "column": 15,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-04",
+          "column": 16,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-04",
+          "column": 17,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-05",
+          "column": 18,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-05",
+          "column": 19,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-06",
+          "column": 20,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-06",
+          "column": 21,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-07",
+          "column": 22,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-07",
+          "column": 23,
+          "measure": "volume",
+          "unit": "m3"
+        }
+      ],
+      "primaryMeasure": "volume",
+      "constants": {
+        "coordinateSystem": "UNCONFIRMED"
+      },
+      "requiredFields": [
+        "demandId",
+        "customerNodeId",
+        "customerName",
+        "customerAddress",
+        "coordinate",
+        "currentSiteId",
+        "statedTotal"
+      ],
+      "excludeRows": [
+        {
+          "rowNumber": 48,
+          "reasonCode": "SOURCE_SUMMARY_STALE_TOTAL"
+        }
+      ]
+    },
+    {
+      "sheet": "⑥东莞销售出库",
+      "kind": "PERIOD_DEMAND",
+      "startRow": 4,
+      "endRow": 48,
+      "headerRows": [
+        1,
+        2,
+        3
+      ],
+      "fields": {
+        "demandId": {
+          "column": 1,
+          "prefix": "UC:DG:DEMAND:"
+        },
+        "customerNodeId": {
+          "column": 1,
+          "prefix": "UC:DG:CUSTOMER:"
+        },
+        "customerName": 3,
+        "customerAddress": 4,
+        "coordinate": 5,
+        "currentSiteId": {
+          "constant": "UC:DC:东莞"
+        },
+        "statedTotal": 7
+      },
+      "periodColumns": [
+        {
+          "period": "2026-01",
+          "column": 10,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-01",
+          "column": 11,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-02",
+          "column": 12,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-02",
+          "column": 13,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-03",
+          "column": 14,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-03",
+          "column": 15,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-04",
+          "column": 16,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-04",
+          "column": 17,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-05",
+          "column": 18,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-05",
+          "column": 19,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-06",
+          "column": 20,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-06",
+          "column": 21,
+          "measure": "volume",
+          "unit": "m3"
+        },
+        {
+          "period": "2026-07",
+          "column": 22,
+          "measure": "boxes",
+          "unit": "box"
+        },
+        {
+          "period": "2026-07",
+          "column": 23,
+          "measure": "volume",
+          "unit": "m3"
+        }
+      ],
+      "primaryMeasure": "volume",
+      "constants": {
+        "coordinateSystem": "UNCONFIRMED"
+      },
+      "requiredFields": [
+        "demandId",
+        "customerNodeId",
+        "customerName",
+        "customerAddress",
+        "coordinate",
+        "currentSiteId",
+        "statedTotal"
+      ],
+      "excludeRows": [
+        {
+          "rowNumber": 21,
+          "reasonCode": "SOURCE_SUMMARY_ROW"
+        },
+        {
+          "rowNumber": 48,
+          "reasonCode": "SOURCE_SUMMARY_STALE_DUPLICATE"
+        }
+      ]
+    }
+  ]
+}

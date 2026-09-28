@@ -12,7 +12,8 @@ const source = fs.mkdtempSync(path.join(os.tmpdir(), "lospollos-v1.4-audit-sourc
 const output = fs.mkdtempSync(path.join(os.tmpdir(), "stct-redacted-parent-"));
 const bundle = path.join(output, "bundle");
 const protectedFile = path.join(source, "evidence.txt");
-const protectedContent = `project=/Users/gz/Documents/lospollos\nevidence=${source}\nurl=file:///Users/gz/Documents/lospollos/index.html\nuser=gz\nhome=/home/gz/work\nmarkers=/Users/ /home/ file:///Users\nruntime=/private/var/folders/aa/bb/T/stct-run/evidence.json\ntemp=/tmp/stct-v14-check/output.txt\n`;
+const localUser = os.userInfo().username;
+const protectedContent = `project=${root}\nevidence=${source}\nurl=file://${root}/index.html\nuser=${localUser}\nhome=/home/${localUser}/work\nmarkers=/Users/ /home/ file:///Users\nruntime=/private/var/folders/aa/bb/T/stct-run/evidence.json\ntemp=/tmp/stct-v14-check/output.txt\n`;
 fs.writeFileSync(protectedFile, protectedContent, "utf8");
 fs.writeFileSync(path.join(source, "safe.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x67, 0x7a, 0x00, 0xff]));
 fs.writeFileSync(path.join(source, "change.patch"), "--- /Users/gz/old\n+++ /tmp/new\n", "utf8");
@@ -30,7 +31,7 @@ assert(fs.existsSync(path.join(bundle, "safe.png")));
 assert(fs.existsSync(path.join(bundle, "change.patch")));
 assert(fs.existsSync(path.join(bundle, "change.sha256")));
 const redacted = fs.readFileSync(path.join(bundle, "evidence.txt"), "utf8");
-for (const marker of ["/Users/", "/home/", "/tmp/", "/private/var/folders/", "file:///Users", "user=gz"]) assert(!redacted.includes(marker), marker);
+for (const marker of ["/Users/", "/home/", "/tmp/", "/private/var/folders/", "file:///Users", `user=${localUser}`]) assert(!redacted.includes(marker), marker);
 for (const marker of ["<PROJECT_ROOT>", "<EVIDENCE_ROOT>", "file://<PROJECT_ROOT>", "<LOCAL_USER>", "<RUNTIME_ROOT>", "<TEMP_ROOT>"]) assert(redacted.includes(marker), marker);
 for (const required of ["PATH_REDACTION_MAP.md", "README-REPLAY.md", "SHA256SUMS.txt"]) assert(fs.existsSync(path.join(bundle, required)), required);
 const manifest = fs.readFileSync(path.join(bundle, "SHA256SUMS.txt"), "utf8");

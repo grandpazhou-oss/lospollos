@@ -1,0 +1,85 @@
+'use strict';
+const assert = require('node:assert/strict');
+const Contract = require('../network-contract-v18.js');
+const Design = require('../supply-chain-design-v19.js');
+const Controller = require('../supply-chain-controller-v19.js');
+
+const rows = new Map();
+const key = (store, id) => `${store}:${id}`;
+const repository = {
+  record: (id, payload, refs = []) => ({ id, payload: structuredClone(payload), refs, contentHash: Contract.hashArtifact(payload) }),
+  async read(store, id) { return id === undefined ? [...rows.entries()].filter(([name]) => name.startsWith(`${store}:`)).map(([, value]) => structuredClone(value)) : structuredClone(rows.get(key(store, id)) || null); },
+  async commit({ records, pointer, expectedRevision }) {
+    const old = rows.get(key('pointers', pointer.id)); assert.equal(old?.revision || 0, expectedRevision);
+    for (const [store, values] of Object.entries(records)) for (const value of values) rows.set(key(store, value.id), structuredClone(value));
+    const saved = { ...pointer, revision: expectedRevision + 1, savedAt: new Date().toISOString() };
+    rows.set(key('pointers', pointer.id), structuredClone(saved));
+    return { status: 'SAVED', pointer: saved };
+  }
+};
+const study = Design.createStudy({ studyId: 'DRAFT-SYNTHETIC', classification: 'SYNTHETIC', nodes: [{ nodeId: 'A', role: 'DC', name: 'Alpha', coordinate: [120, 30] }, { nodeId: 'B', role: 'DC', name: 'Beta', coordinate: [121, 30] }, { nodeId: 'C', role: 'CUSTOMER', coordinate: [120.5, 30] }], periodDemand: [{ demandId: 'D', customerNodeId: 'C', currentSiteId: 'A', period: 'P1', quantity: 5, unit: 'm3' }], coordinateUse: 'ASSUMED_WGS84_SCREENING' });
+(async () => {
+  const controller = Controller.createController({ repository });
+  controller.loadStudy(study);
+  const beforeSolve = await controller.save();
+  assert.equal(beforeSolve.pointer.status, 'DRAFT');
+  assert.equal(beforeSolve.pointer.snapshotHash, null);
+  assert.throws(() => controller.exportReport('json'), { code: 'SUPPLY_SNAPSHOT_NOT_READY' });
+  const restored = Controller.createController({ repository });
+  await restored.reopen(beforeSolve.pointer.id);
+  assert.equal(restored.snapshot().study.inputHash, study.inputHash);
+  assert.equal(restored.snapshot().snapshot, null);
+  controller.calculateBaseline('GEOGRAPHIC_SCREENING');
+  controller.configureScenario({ scenarioId: 'THREE-SITES', type: 'NETWORK_CANDIDATE', objective: 'VOLUME_KM', distanceBasis: 'GEOGRAPHIC_SCREENING', facilityCounts: [2], selectedSiteIds: ['A', 'B'], requiredSiteIds: ['A'] });
+  const withConditions = await controller.save();
+  await restored.reopen(withConditions.pointer.id);
+  assert.deepEqual(restored.snapshot().scenario.facilityCounts, [2]);
+  assert.deepEqual(restored.snapshot().scenario.requiredSiteIds, ['A']);
+  const failed = Controller.createController({ repository, fetch: async () => { throw new Error('LOCAL_SOLVER_UNAVAILABLE'); } });
+  await failed.reopen(withConditions.pointer.id);
+  await assert.rejects(failed.run(), error => error.code === 'SUPPLY_SERVICE_INCOMPATIBLE' && error.detail.reason === 'LOCAL_SOLVER_UNAVAILABLE');
+  const failedDraft = await failed.save();
+  assert.equal(failedDraft.pointer.status, 'DRAFT');
+  await restored.reopen(failedDraft.pointer.id);
+  assert.deepEqual(restored.snapshot().scenario.facilityCounts, [2]);
+  await assert.rejects(controller.save(), { code: 'REVISION_CONFLICT' });
+  await controller.reopen(failedDraft.pointer.id);
+  controller.calculateBaseline('GEOGRAPHIC_SCREENING');
+  let release;
+  const delayed = Controller.createController({ fetch: () => new Promise(resolve => { release = resolve; }) });
+  delayed.loadStudy(study);
+  delayed.configureScenario({ scenarioId: 'DELAYED', type: 'NETWORK_CANDIDATE', distanceBasis: 'GEOGRAPHIC_SCREENING', facilityCounts: [2], selectedSiteIds: ['A', 'B'] });
+  const pending = delayed.run();
+  delayed.updateStudy({ name: 'Newer study version' });
+  release({ ok: true, json: async () => ({}) });
+  await assert.rejects(pending, { code: 'SUPPLY_RUN_OBSOLETE' });
+  assert.equal(delayed.snapshot().status, 'STUDY_READY');
+  assert.equal(delayed.snapshot().candidates.length, 0);
+  controller.compare();
+  const oldHash = controller.snapshot().snapshot.snapshotHash;
+  await controller.save();
+  controller.updateStudy({ name: 'Changed conditions' });
+  const expired = await controller.save();
+  assert.equal(expired.pointer.status, 'DRAFT');
+  assert.equal(expired.pointer.staleResult.snapshotHash, oldHash);
+  assert.ok(expired.pointer.historySnapshotHashes.includes(oldHash));
+  await restored.reopen(expired.pointer.id);
+  assert.equal(restored.snapshot().snapshot, null);
+  assert.equal(restored.snapshot().staleResult.snapshotHash, oldHash);
+  assert.throws(() => restored.exportReport('json'), { code: 'SUPPLY_SNAPSHOT_NOT_READY' });
+  let releaseCommit;
+  const delayedRepository = { ...repository, commit: input => new Promise((resolve, reject) => { releaseCommit = () => repository.commit(input).then(resolve, reject); }) };
+  const late = Controller.createController({ repository: delayedRepository });
+  late.loadStudy({ ...study, studyId: 'LATE-SAVE-A' });
+  const pendingSave = late.save();
+  for (let i = 0; i < 20 && !releaseCommit; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(typeof releaseCommit, 'function');
+  late.loadStudy({ ...study, studyId: 'LATE-SAVE-B' });
+  releaseCommit();
+  const lateResult = await pendingSave;
+  assert.equal(lateResult.status, 'SAVED');
+  assert.equal(late.snapshot().study.studyId, 'LATE-SAVE-B');
+  assert.equal(late.snapshot().savedPointer, null, 'old save receipt must not mark the new study saved');
+  assert.equal((await repository.read('pointers', 'SUPPLY:LATE-SAVE-A')).status, 'DRAFT');
+  console.log(JSON.stringify({ suite: 'SUPPLY_CHAIN_DRAFT_V19', status: 'PASS', unsolvedDraft: true, failedDraft: true, conditionReadback: true, expiredReportBlocked: true, obsoleteReplyIgnored: true }));
+})().catch(error => { console.error(error.stack); process.exitCode = 1; });
