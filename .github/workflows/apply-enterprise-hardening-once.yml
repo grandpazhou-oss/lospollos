@@ -1,0 +1,95 @@
+name: Apply enterprise hardening once
+on:
+  push:
+    branches: [codex/enterprise-hardening-20261006]
+    paths: [.github/workflows/apply-enterprise-hardening-once.yml]
+permissions:
+  contents: write
+concurrency:
+  group: enterprise-hardening-apply
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'grandpazhou-oss/lospollos' && github.ref == 'refs/heads/codex/enterprise-hardening-20261006'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Apply audited bytes only to unchanged source files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, subprocess, urllib.request, zlib
+          base = '8a006606f4b181039ee4384d65782d32b330f32d'
+          paths = ['.gitattributes','README.md','CURRENT_STATE.md','BUILD_IDENTITY.md','config.js','local-road-client-v86.js','optimizer/ortools_service.py','optimizer/supply_chain_jobs_v6.py','optimizer/build-manifest.json','optimizer/build_identity.py','optimizer/solve_admission.py','scripts/local_trial.py','scripts/update_build_identity.py','scripts/run_enterprise_checks.py','supply-chain-controller-v19.js','tests/t_f19_revision_adoption.js','tests/test_backend_build_fingerprint.py','tests/test_enterprise_admission.py','tests/test_enterprise_hardening.js','tests/test_enterprise_indexeddb.py']
+          subprocess.run(['git','diff','--exit-code',base,'HEAD','--',*paths],check=True)
+          parts = ['df6b24590a5e8bf96d5c10ae086385b98e8a64aa','42a05fd383b39a5269a9509711ce660f055284d3','bb66d2a1cde9c2fde25af62c99d8aa6be368403e','e0832d1c4f0b61f7fd19008a3b909411d4464a4d','bc3c651e51c5ac12a88299bcaad17fabc74e7705','e062bcaab0acbc5f81efeb4cca609c5469ae7d31','a69c675a4e86a272fc5fb07f23e28fe6852e14ba']
+          compressed = b''
+          for sha in parts:
+              req = urllib.request.Request('https://api.github.com/repos/grandpazhou-oss/lospollos/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  blob = json.load(response)
+              data = base64.b64decode(blob['content'])
+              assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest() == sha
+              compressed += data
+          patch = zlib.decompress(compressed)
+          assert len(patch) == 69628
+          assert hashlib.sha256(patch).hexdigest() == 'd5f0abff8213c00158b4dee7160da778a1c1ed00696cae26a20dad126cf47079'
+          changed = [line[6:] for line in patch.decode('utf-8').splitlines() if line.startswith('+++ b/')]
+          assert set(changed) == set(paths)
+          path = pathlib.Path(os.environ['RUNNER_TEMP'])/'enterprise-hardening.patch'
+          path.write_bytes(patch)
+          subprocess.run(['git','apply','--unidiff-zero','--check',str(path)],check=True)
+          subprocess.run(['git','apply','--unidiff-zero',str(path)],check=True)
+          subprocess.run(['git','diff','--check'],check=True)
+          (pathlib.Path(os.environ['RUNNER_TEMP'])/'hardening-paths.json').write_text(json.dumps(paths))
+          print('Verified patch applied to',len(paths),'explicitly allowed files')
+          PY
+      - name: Core synthetic regression
+        run: python3 scripts/run_enterprise_checks.py --mode core --output "$RUNNER_TEMP/evidence/core"
+      - name: Install isolated CI dependencies
+        run: python3 -m pip install 'ortools==9.15.6755' 'playwright==1.57.0'
+      - name: Native OR-Tools and worker lifecycle regression
+        run: python3 scripts/run_enterprise_checks.py --mode native --output "$RUNNER_TEMP/evidence/native"
+      - name: Install CI Chromium
+        run: python3 -m playwright install --with-deps chromium
+      - name: Real IndexedDB across two browser pages
+        env:
+          STCT_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/evidence/browser
+        run: python3 scripts/run_enterprise_checks.py --mode browser --output "$RUNNER_TEMP/evidence/browser"
+      - name: Commit only verified source changes, never merge or force push
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          branch='codex/enterprise-hardening-20261006'
+          remote=subprocess.check_output(['git','ls-remote','origin','refs/heads/'+branch],text=True).split()[0]
+          assert remote==os.environ['GITHUB_SHA'], 'Branch advanced: refusing to overwrite concurrent changes'
+          paths=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'hardening-paths.json').read_text())
+          subprocess.run(['git','add','--',*paths],check=True)
+          actual=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert set(actual)==set(paths)
+          subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          subprocess.run(['git','commit','-m','fix: harden study saves, build admission, solver concurrency and road provenance'],check=True)
+          subprocess.run(['git','push','origin','HEAD:refs/heads/'+branch],check=True)
+          print('PUSHED_COMMIT='+subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-hardening-evidence
+          path: ${{ runner.temp }}/evidence
+          retention-days: 7
+          if-no-files-found: warn
