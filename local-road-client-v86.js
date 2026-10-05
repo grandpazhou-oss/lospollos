@@ -13,7 +13,31 @@
     if(!['http:','https:'].includes(endpoint.protocol)||!['127.0.0.1','localhost','[::1]'].includes(endpoint.hostname)||endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.pathname!=='/')fail('ROAD_LOCAL_ENDPOINT_REQUIRED');
     const timeoutMs=Number(input.roadRequestTimeoutMs??10000),budgetMs=Number(input.roadBudgetMs??120000),maxSnapMeters=Number(input.roadMaxSnapMeters??1000);
     if(![timeoutMs,budgetMs,maxSnapMeters].every(v=>Number.isFinite(v)&&v>0)||timeoutMs>60000||budgetMs>600000)fail('ROAD_BUDGET_INVALID');
+    if(input.roadProfile!=null&&input.roadProfile!=='driving')fail('ROAD_PROFILE_UNSUPPORTED');
     return {endpoint:endpoint.origin,timeoutMs,budgetMs,maxSnapMeters,profile:'driving',networkVersion:input.roadNetworkVersion||null};
+  }
+  // Cross-study reuse is stricter than accepting a user-supplied distance table.
+  // Missing provenance means recalculate, not promote an estimate to verified data.
+  function reuseAssessment(row,from,to,coordinateUse,options={},now=Date.now()){
+    const reject=reason=>({reusable:false,reason});
+    let config;try{config=settings(options);}catch(error){return reject(error.code||'ROAD_CONFIG_INVALID');}
+    const maxAgeMs=options.roadReuseMaxAgeMs??30*24*60*60*1000;
+    if(!Number.isFinite(maxAgeMs)||maxAgeMs<=0||!Number.isFinite(now))return reject('ROAD_REUSE_POLICY_INVALID');
+    if(typeof config.networkVersion!=='string'||!config.networkVersion.trim())return reject('ROAD_NETWORK_VERSION_REQUIRED');
+    if(!row||row.source!=='OSRM_LOCAL'||row.strategy!=='ROUTE_DRIVING'||row.quality!=='ESTIMATED_ROAD'||row.unit!=='km')return reject('ROAD_PROVENANCE_UNSUPPORTED');
+    if(!finite(row.distanceKm)||!finite(row.travelSeconds))return reject('ROAD_METRIC_INVALID');
+    const evidence=row.evidence;
+    if(!evidence||evidence.endpoint!==config.endpoint||evidence.profile!==config.profile||evidence.networkVersion!==config.networkVersion)return reject('ROAD_NETWORK_IDENTITY_MISMATCH');
+    if(!['WGS84','ASSUMED_WGS84_SCREENING'].includes(coordinateUse)||evidence.coordinateUse!==coordinateUse)return reject('ROAD_COORDINATE_SYSTEM_UNCONFIRMED');
+    if(evidence.verification!=='ENGINE_CALCULATED_NOT_MANUALLY_VERIFIED'||evidence.truckRestrictions!=='NOT_VERIFIED'||evidence.traffic!=='NOT_MODELED')return reject('ROAD_ASSUMPTIONS_MISMATCH');
+    const requested=evidence.requestedCoordinates,snapped=evidence.snappedCoordinates;
+    if(!coordinate(from)||!coordinate(to)||!Array.isArray(requested)||requested.length!==2||!requested.every(coordinate)||!Array.isArray(snapped)||snapped.length!==2||!snapped.every(coordinate))return reject('ROAD_COORDINATE_INVALID');
+    if(![from,to].every((value,i)=>value.every((number,j)=>number===requested[i][j])))return reject('ROAD_DIRECTED_PAIR_MISMATCH');
+    for(const field of ['snapMeters','measuredSnapMeters'])if(!Array.isArray(evidence[field])||evidence[field].length!==2||!evidence[field].every(value=>finite(value)&&value<=config.maxSnapMeters))return reject('ROAD_SNAP_LIMIT_EXCEEDED');
+    if(requested.some((value,i)=>snapMeters(value,snapped[i])>config.maxSnapMeters))return reject('ROAD_SNAP_LIMIT_EXCEEDED');
+    const observedAt=typeof row.observedAt==='string'?Date.parse(row.observedAt):NaN;
+    if(!Number.isFinite(observedAt)||observedAt>now||now-observedAt>maxAgeMs)return reject('ROAD_EVIDENCE_EXPIRED');
+    return {reusable:true,reason:null};
   }
   async function route(coords,options={}){
     if(!Array.isArray(coords)||coords.length<2||!coords.every(coordinate))fail('ROAD_COORDINATE_INVALID');
@@ -59,5 +83,5 @@
       return {rows,failures,total:pairs.length,done,status:timeout?'PARTIAL_BUDGET_EXPIRED':failures.length?'PARTIAL':'COMPLETE',elapsedMs:Date.now()-started};
     }finally{clearTimeout(timer);external?.removeEventListener('abort',stop);}
   }
-  return Object.freeze({settings,route,matrix});
+  return Object.freeze({settings,route,matrix,reuseAssessment});
 });
