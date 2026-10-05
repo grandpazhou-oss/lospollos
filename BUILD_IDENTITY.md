@@ -1,34 +1,42 @@
-# Local backend build identity
+# Verified local runtime identity
 
-`buildFingerprint` is a narrowly scoped identity for the bundled optimizer and
-supply-chain protocol implementation. It is not a complete application, dependency,
-environment or transitive source integrity attestation.
+This candidate replaces the historical five-file fingerprint with a generated runtime
+manifest. It is an integrity check, **not** a digital signature, trusted attestation,
+credential, full-application hash or proof of business correctness.
 
-The ordered scope is `optimizer/ortools_service.py`, `canonical_contract.py`,
-`facility_mvp1.py`, `supply_chain_joint_v19.py`, and `supply_chain_jobs_v6.py`.
-Compute SHA-256 over each relative filename encoded as UTF-8, one NUL byte, and
-that file's exact bytes, concatenated in this order. The frontend configuration,
-launcher, documentation, generated evidence and the fingerprint value itself are
-outside the hashed input, so updating the pin does not create a circular hash.
+`optimizer/build_identity.py` defines the exact scope: all top-level `optimizer/*.py`
+modules (including `supply_chain_job_worker_v6.py` and the identity/admission modules),
+`shared/planning-contract-v13.json`, the local launcher/static server/path allowlist
+implementation, and `public-resources.json`. The generated `optimizer/build-manifest.json`
+contains the sorted repository-relative paths, exact file SHA-256 hashes and a combined
+fingerprint over `relative-path UTF-8 + NUL + exact file bytes` for each path in order.
 
-The service exposes this value and its file scope in `/health`; jobs expose the
-same value as `backendBuildFingerprint` with the current backend instance ID.
-The local launcher checks health against the source-derived fingerprint before
-recording readiness. The supply-chain controller checks endpoint, instance,
-protocol, model and capabilities, then verifies every job response against that
-health identity. A compatible build difference is still reported as
-`COMPATIBLE_BUILD_DIFFERS`; the corrected frontend pin removes the unintended
-difference for this bundled source.
+The service refuses startup when the stored manifest differs from recomputed source,
+when a file is missing/invalid, or when a new optimizer Python module is not recorded.
+The launcher uses the same validator. `/health` reports this fingerprint and its scope.
+The browser controller separately checks endpoint, instance, protocol, model and
+capabilities; the shipped `config.js` now chooses `STRICT_PINNED`.
 
-Run `python3 tests/test_backend_build_fingerprint.py` after editing any file in
-the scope. Recompute the pin from those files and verify a newly started isolated
-backend, since an already running process retains its startup fingerprint.
+```sh
+# After deliberate changes to scoped runtime source, regenerate BOTH artifacts:
+python3 scripts/update_build_identity.py
+# Read-only check used by CI and operators:
+python3 scripts/update_build_identity.py --check
+python3 tests/test_backend_build_fingerprint.py
+```
 
-The historical optimizer fixture suite now submits the current canonical
-envelope. Valid distance, cost, carbon, capacity, priority, time-window and
-conservation expectations retain their original fixture values. The current
-contract rejects excessive time limits, duplicate canonical IDs, missing
-coordinates and invalid time strings before solving; those cases assert the
-current explicit rejection instead of expecting an obsolete raw-payload fallback.
-Order permutation is canonical, while an actual change to the order set must
-invalidate the claimed hash. No solver or production guard is altered.
+Manifest bytes and `config.js`'s pin are committed together. The pin itself is outside
+the hash input, avoiding a circular hash. `.gitattributes` keeps Python/JSON/JS source
+LF on Windows checkouts. Copying files with newline conversion will fail validation;
+do not bypass the failure by switching to warning mode on an accepted trial.
+
+The actual frontend/UI files, dependencies, interpreter, Git metadata, input datasets
+and generated evidence are outside this runtime source fingerprint. Record their own
+versions and checksums separately for release evidence. Editing source while an old
+process remains alive requires stopping/restarting that owned trial; its loaded Python
+code is not replaced merely because files on disk change.
+
+`COMPATIBLE_WARN` is available for deliberate development interoperability, but is
+not strict build admission. A controller embedded without any STCT configuration keeps
+that historical API fallback. Neither mode supplies user authentication or makes an
+untrusted local process safe. See `CURRENT_STATE.md` for remaining release blockers.

@@ -16,6 +16,11 @@ import uuid
 from pathlib import Path
 
 
+try:
+    from solve_admission import SOLVE_ADMISSION, SolverBusy
+except ImportError:
+    from optimizer.solve_admission import SOLVE_ADMISSION, SolverBusy
+
 TERMINAL = {"COMPLETE", "PARTIAL", "CANCELLED", "FAILED"}
 HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SCHEMAS = {"JOINT": ("stct-supply-chain-joint-request-v1", "stct-supply-chain-joint-request-v2"), "FACILITY": ("stct-facility-solve-request-v1.9-mvp1",)}
@@ -127,7 +132,8 @@ def _diagnostic(line):
 
 
 class JobManager:
-    def __init__(self):
+    def __init__(self, admission=None):
+        self.admission = admission if admission is not None else SOLVE_ADMISSION
         self.lock = threading.RLock()
         self.jobs = {}
         self.active_id = None
@@ -150,9 +156,19 @@ class JobManager:
                 self.jobs.pop(old["jobId"], None)
             job_id = uuid.uuid4().hex
             job = {"jobId": job_id, "runSpecHash": spec["runSpecHash"], "serverKey": server_key, "studyHash": spec["studyHash"], "scenarioHash": spec["scenarioHash"], "modelVersion": spec["modelVersion"], "acceptedRequestIds": {row["phase"]: row["payload"]["requestId"] for row in spec["requests"]}, "status": "PREPARING", "phase": "PREPARING", "createdAt": time.time(), "startedAt": None, "completedAt": None, "budgetSeconds": spec["budgetSeconds"], "declaredBudgetSeconds": spec.get("declaredBudgetSeconds", spec["budgetSeconds"]), "elapsedSeconds": 0, "feasible": 0, "currentCount": None, "currentRank": None, "results": {}, "error": None, "pid": None, "process": None, "cancelRequested": False, "timeoutRequested": False, "stderrTail": "", "exitCode": None}
+            try:
+                self.admission.acquire(job_id)
+            except SolverBusy:
+                raise JobError("SUPPLY_JOB_BUSY", 429)
             self.jobs[job_id] = job
             self.active_id = job_id
-            threading.Thread(target=self._run, args=(job, spec), daemon=True).start()
+            try:
+                threading.Thread(target=self._run, args=(job, spec), daemon=True).start()
+            except Exception:
+                self.jobs.pop(job_id, None)
+                self.active_id = None
+                self.admission.release(job_id)
+                raise
             return self._public(job)
 
     def _public(self, job, include_results=False):
@@ -199,8 +215,7 @@ class JobManager:
             job["status"] = "CANCELLED"
             job["phase"] = "CANCELLED"
             job["completedAt"] = job["completedAt"] or time.time()
-            if self.active_id == job_id:
-                self.active_id = None
+            # The worker finalizer owns the lease until the process is actually reaped.
             return self._public(job)
 
     def _stderr(self, job, stream):
@@ -320,6 +335,7 @@ class JobManager:
                 job["process"] = None
                 if self.active_id == job["jobId"]:
                     self.active_id = None
+                self.admission.release(job["jobId"])
             for stream in (getattr(process, "stdin", None), getattr(process, "stdout", None), getattr(process, "stderr", None)):
                 if stream:
                     stream.close()

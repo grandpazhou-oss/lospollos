@@ -83,5 +83,11 @@
       return {rows,failures,total:pairs.length,done,status:timeout?'PARTIAL_BUDGET_EXPIRED':failures.length?'PARTIAL':'COMPLETE',elapsedMs:Date.now()-started};
     }finally{clearTimeout(timer);external?.removeEventListener('abort',stop);}
   }
-  return Object.freeze({settings,route,matrix,reuseAssessment});
+  function reusable(row,study,options={}){
+    if(!row||!study||!Array.isArray(study.nodes))return false;
+    const from=study.nodes.find(node=>node.nodeId===row.fromNodeId)?.coordinate;
+    const to=study.nodes.find(node=>node.nodeId===row.toNodeId)?.coordinate;
+    return reuseAssessment(row,from,to,study.coordinateUse,options,options.now??Date.now()).reusable;
+  }
+  return Object.freeze({settings,route,matrix,reuseAssessment,reusable});
 });

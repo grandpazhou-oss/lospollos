@@ -1,70 +1,17 @@
-(function (root) {
+(function(root){
   'use strict';
-  root.__tests = root.__tests || [];
-
-  /* F19 保存版本收养：草稿/包重导入（savedPointer 被重置）后首次保存不得"自冲突"；
-     跨标签真并发（过期会话）仍必须 REVISION_CONFLICT。
-     断言只看 controller.save() 公开结果与仓储公开 read() 回读。 */
-
-  function studyInput(studyId, name) {
-    return {
-      studyId,
-      name,
-      unit: 'm3',
-      nodes: [
-        { nodeId: 'W', role: 'DC', name: 'Warehouse' },
-        { nodeId: 'CUSTOMER:1', role: 'CUSTOMER', name: 'Customer1' }
-      ],
-      periodDemand: [{ demandId: 'D1', customerNodeId: 'CUSTOMER:1', period: '2026-01', quantity: 10, unit: 'm3' }]
-    };
-  }
-
-  root.__tests.push({
-    id: 'F19',
-    title: '重导入收养版本号不自冲突；跨标签过期会话仍冲突',
-    run: async () => {
-      const Controller = root.STCTPlatformV19.supplyChainController;
-      const stub = root.STCTMemRepo.createRepository();
-      const c1 = Controller.createController({ repository: stub });
-
-      // 1) 首次保存 → rev1
-      c1.loadStudy(studyInput('STUDY-ADOPT', 'v1'));
-      const saved1 = await c1.save();
-
-      // 2) 模拟草稿重导入：同 studyId 重新载入（loadStudy 会重置 savedPointer）
-      c1.loadStudy(studyInput('STUDY-ADOPT', 'v1-reimported'));
-      let reimportSave = null;
-      try { reimportSave = await c1.save(); } catch (e) { reimportSave = { error: e.code || e.message }; }
-      const pointerAfterAdopt = await stub.read('pointers', 'SUPPLY:STUDY-ADOPT');
-
-      // 3) 跨标签：独立会话 reopen 到最新版并保存 rev3
-      const c2 = Controller.createController({ repository: stub });
-      await c2.reopen('SUPPLY:STUDY-ADOPT');
-      c2.updateStudy({ name: 'v2-from-tab2' });
-      const saved3 = await c2.save();
-
-      // 4) 本会话（savedPointer 停在 rev2）再保存 → 必须 REVISION_CONFLICT
-      c1.updateStudy({ name: 'v3-stale-tab1' });
-      let c1Result = null;
-      try { c1Result = await c1.save(); } catch (e) { c1Result = { error: e.code || e.message }; }
-
-      const pointerFinal = await stub.read('pointers', 'SUPPLY:STUDY-ADOPT');
-      const adoptedOk = !reimportSave.error && pointerAfterAdopt && pointerAfterAdopt.revision === 2;
-      const crossTabOk = Boolean(c1Result && c1Result.error === 'REVISION_CONFLICT');
-      const pass = Boolean(adoptedOk && crossTabOk && pointerFinal && pointerFinal.revision === 3);
-
-      return {
-        pass,
-        expected: '重导入后保存成功（收养 rev1→2）；过期会话保存得 REVISION_CONFLICT；最终 rev3',
-        actual: {
-          firstSaveRevision: saved1.pointer.revision,
-          reimportSave: reimportSave.error ? { error: reimportSave.error } : { revision: reimportSave.pointer.revision },
-          revAfterAdopt: pointerAfterAdopt && pointerAfterAdopt.revision,
-          tab2Save: saved3.pointer.revision,
-          staleTab1Save: c1Result,
-          finalRevision: pointerFinal && pointerFinal.revision
-        }
-      };
-    }
-  });
-})(typeof window !== 'undefined' ? window : globalThis);
+  root.__tests=root.__tests||[];
+  // Supersedes the historical adoption expectation: importing is not editing authority.
+  root.__tests.push({id:'F19',title:'同 ID 导入拒绝隐式覆盖；显式编辑保留版本并发检查',run:async()=>{
+    const C=root.STCTPlatformV19.supplyChainController,repo=root.STCTMemRepo.createRepository();
+    const input={studyId:'STUDY-ADOPT',name:'Original',unit:'m3',nodes:[{nodeId:'W',role:'DC'},{nodeId:'C',role:'CUSTOMER'}],periodDemand:[{demandId:'D',customerNodeId:'C',period:'P',quantity:10,unit:'m3'}]};
+    const owner=C.createController({repository:repo});owner.loadStudy(input);await owner.save();
+    const imported=C.createController({repository:repo});imported.loadStudy({...input,name:'Imported different content'});
+    let conflict=null;try{await imported.save();}catch(e){conflict=e.code;}
+    const retained=await repo.read('pointers','SUPPLY:STUDY-ADOPT');
+    const edit=C.createController({repository:repo});await edit.reopen('SUPPLY:STUDY-ADOPT');edit.updateStudy({name:'Explicit edit'});await edit.save();
+    owner.updateStudy({name:'Stale edit'});let stale=null;try{await owner.save();}catch(e){stale=e.code;}
+    const final=await repo.read('pointers','SUPPLY:STUDY-ADOPT');
+    return{pass:conflict==='REVISION_CONFLICT'&&retained.revision===1&&stale==='REVISION_CONFLICT'&&final.revision===2,expected:'导入冲突保持 rev1；显式编辑推进至 rev2；过期编辑拒绝',actual:{importConflict:conflict,retainedRevision:retained.revision,staleConflict:stale,finalRevision:final.revision}};
+  }});
+})(typeof window!=='undefined'?window:globalThis);

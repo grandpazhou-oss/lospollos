@@ -1,0 +1,9 @@
+# Runtime identity hashes exact bytes; keep cross-platform checkouts consistent.
+*.py text eol=lf
+*.js text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.cmd text eol=crlf

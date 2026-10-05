@@ -35,7 +35,7 @@
     async function generateRoadDistances(onProgress){
       const token=inputToken(),study=state.study;activeRoad?.abort();const abort=new AbortController();activeRoad=abort;
       const sites=study.nodes.filter(n=>['DC','WAREHOUSE'].includes(n.role)),customers=study.nodes.filter(n=>study.periodDemand.some(d=>d.customerNodeId===n.nodeId)),sources=study.nodes.filter(n=>['FACTORY','SUPPLIER','PLANT'].includes(n.role));
-      const have=new Set(study.distanceRows.filter(r=>['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)&&r.distanceKm!=null).map(r=>`${r.fromNodeId}|${r.toNodeId}`)),pairs=[];
+      const have=new Set(study.distanceRows.filter(r=>['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)&&r.distanceKm!=null&&(r.source!=='OSRM_LOCAL'||Road.reusable(r,study,{...globalThis.STCT_CONFIG,...options.roadConfig}))).map(r=>`${r.fromNodeId}|${r.toNodeId}`)),pairs=[];
       for(const from of sites)for(const to of customers)if(!have.has(`${from.nodeId}|${to.nodeId}`))pairs.push([from,to]);
       for(const from of sources)for(const to of sites)if(!have.has(`${from.nodeId}|${to.nodeId}`))pairs.push([from,to]);
       try{const result=await Road.matrix(study,pairs,{...globalThis.STCT_CONFIG,...options.roadConfig,fetch:fetchValue,signal:abort.signal,onProgress:value=>{checkInput(token);onProgress?.(value);}});checkInput(token);if(activeRoad!==abort)fail('SUPPLY_ROAD_OBSOLETE');activeRoad=null;if(result.rows.length)commitDistances(result.rows,token);return result;}

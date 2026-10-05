@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "stct-runtime-manifest-v1",
+  "files": [
+    {
+      "path": "optimizer/build_identity.py",
+      "sha256": "a86d2e0e98f2ec6490ca3335e606a13ffd55816880fe5db30cc011ee35aead3d"
+    },
+    {
+      "path": "optimizer/canonical_contract.py",
+      "sha256": "affa00a3903fb0440f1c96f47a3e041cbfed9672a517fd263cc386385fce77d3"
+    },
+    {
+      "path": "optimizer/facility_mvp1.py",
+      "sha256": "993817e35ca44f5af303ba47a651f7672b56263d02e38ad76f5d53157abaad63"
+    },
+    {
+      "path": "optimizer/matrix_contract.py",
+      "sha256": "ba09dded240aab48df054356e6558f578aed139da573202acd6d273e19323496"
+    },
+    {
+      "path": "optimizer/network_contract_v18.py",
+      "sha256": "f4e0368b98bfedb6f6cbcb405a281118fb692731ca11da743505fe5e385b389a"
+    },
+    {
+      "path": "optimizer/network_solver_v18.py",
+      "sha256": "4dd6cb8c28405b0c2262ba28d05a4849cf0948b13d5a2463d396e7e8a3df5166"
+    },
+    {
+      "path": "optimizer/ortools_service.py",
+      "sha256": "bfa3527795071e56c6e53b425fc8f9e35b11af84746fa90d5e06f809881f82c7"
+    },
+    {
+      "path": "optimizer/rolling_solver_v16.py",
+      "sha256": "9886a2b7ce060cbeb0db01cbbc8fdade147e6ca74259e2c3e9e131ace676c0cf"
+    },
+    {
+      "path": "optimizer/routing_contract_v16.py",
+      "sha256": "1f41189d912998f67c982928f6986087d7bc8e9a075184187bfe24d30a030bbd"
+    },
+    {
+      "path": "optimizer/solve_admission.py",
+      "sha256": "999d5daa5f9f2740e4d84dec433f4dd7b92ae4506cab398a73ac7651221a9ea6"
+    },
+    {
+      "path": "optimizer/supply_chain_job_worker_v6.py",
+      "sha256": "2603c52407aa49b93ef3d67ed5a079cd21ebe1f351693371e4cbb6ae7dced7e7"
+    },
+    {
+      "path": "optimizer/supply_chain_jobs_v6.py",
+      "sha256": "5cfd977dca8be08975a56ca62279159b95d155b1653daff8be41f7de6f1a77eb"
+    },
+    {
+      "path": "optimizer/supply_chain_joint_v19.py",
+      "sha256": "5d160098e5e24457242b1d29d036a33c9327d210bbb1a4f517bbfbcb4d733284"
+    },
+    {
+      "path": "public-resources.json",
+      "sha256": "7f0664c86ebf416c340d7613206eba7c6ded6920f8ab7e8023b40c73d6904b20"
+    },
+    {
+      "path": "scripts/local_trial.py",
+      "sha256": "d42914506a345c858b9cc90181812d4179b95870119b5f12eafc8c314668c48b"
+    },
+    {
+      "path": "scripts/local_web.py",
+      "sha256": "928d3d6af7912317d8a84c5ae1d51b5279db4d71bd54443d371acd8a80d568fd"
+    },
+    {
+      "path": "scripts/public_resources.py",
+      "sha256": "e00e4243519821ea3431b7b76f58dd498fbc807a0a939d5b914b94fe2467bd2d"
+    },
+    {
+      "path": "shared/planning-contract-v13.json",
+      "sha256": "92f26e26cfed3f0a25d56662012f180dcedc5388d6e4595a8d5f75317489fb82"
+    }
+  ],
+  "fingerprint": "224442d2cec1278f5cab728855c422b06d8f7a7ec3f4f34d0ee3e23097cdc6c6"
+}
