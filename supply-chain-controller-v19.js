@@ -35,7 +35,7 @@
     async function generateRoadDistances(onProgress){
       const token=inputToken(),study=state.study;activeRoad?.abort();const abort=new AbortController();activeRoad=abort;
       const sites=study.nodes.filter(n=>['DC','WAREHOUSE'].includes(n.role)),customers=study.nodes.filter(n=>study.periodDemand.some(d=>d.customerNodeId===n.nodeId)),sources=study.nodes.filter(n=>['FACTORY','SUPPLIER','PLANT'].includes(n.role));
-      const have=new Set(study.distanceRows.filter(r=>['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)&&r.distanceKm!=null).map(r=>`${r.fromNodeId}|${r.toNodeId}`)),pairs=[];
+      const have=new Set(study.distanceRows.filter(r=>['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)&&r.distanceKm!=null&&(r.source!=='OSRM_LOCAL'||Road.reusable(r,study,{...globalThis.STCT_CONFIG,...options.roadConfig}))).map(r=>`${r.fromNodeId}|${r.toNodeId}`)),pairs=[];
       for(const from of sites)for(const to of customers)if(!have.has(`${from.nodeId}|${to.nodeId}`))pairs.push([from,to]);
       for(const from of sources)for(const to of sites)if(!have.has(`${from.nodeId}|${to.nodeId}`))pairs.push([from,to]);
       try{const result=await Road.matrix(study,pairs,{...globalThis.STCT_CONFIG,...options.roadConfig,fetch:fetchValue,signal:abort.signal,onProgress:value=>{checkInput(token);onProgress?.(value);}});checkInput(token);if(activeRoad!==abort)fail('SUPPLY_ROAD_OBSOLETE');activeRoad=null;if(result.rows.length)commitDistances(result.rows,token);return result;}
@@ -183,20 +183,49 @@
     }
     async function getProfile(pointerId){if(!repository)fail('SUPPLY_REPOSITORY_REQUIRED');const pointer=await repository.read('pointers',pointerId),ref=pointer?.refs?.find(row=>row.store==='supplyProfiles');if(!ref)fail('SUPPLY_PROFILE_NOT_FOUND');const record=await repository.read('supplyProfiles',ref.id);if(!record||Design.hash(record.payload)!==record.contentHash)fail('SUPPLY_PROFILE_HASH_INVALID');return clone(record.payload);}
     async function openProfile(pointerId){const startedRevision=revision;if(!repository)fail('SUPPLY_REPOSITORY_REQUIRED');const pointer=await repository.read('pointers',pointerId),ref=pointer?.refs?.find(row=>row.store==='supplyProfiles');if(!ref)fail('SUPPLY_PROFILE_NOT_FOUND');const record=await repository.read('supplyProfiles',ref.id);if(!record||Design.hash(record.payload)!==record.contentHash)fail('SUPPLY_PROFILE_HASH_INVALID');checkRevision(startedRevision);return set({profile:record.payload});}
-    async function health(scope='OUTBOUND_ONLY'){try{const {response,body}=await jsonRequest(endpoint.replace(/\/facility-optimize-v19(?:\?.*)?$/,'/health'),{method:'GET'},5000);const required=['FACILITY','SUPPLY_CHAIN_JOBS_V6',...(['UPSTREAM_ONLY','FULL_CHAIN'].includes(scope)?[scope]:[])],missing=required.filter(value=>!body.capabilities?.includes(value)),protocol=body.protocolVersion==='stct-supply-chain-jobs-v6'&&body.modelVersion==='v6-cp-sat-1',actualEndpoint=body.endpoint===new URL(endpoint).origin,identity=Boolean(body.instanceId&&body.startedAt&&/^[a-f0-9]{64}$/.test(body.buildFingerprint||'')),ready=Boolean(response.ok&&body.available&&body.dependencies?.supplyChainReady&&protocol&&actualEndpoint&&identity&&!missing.length);jobSupport=ready&&body.supplyChainJobsV6===true;const expected=options.expectedBuildFingerprint||globalThis.STCT_CONFIG?.expectedOptimizerBuildFingerprint||null,buildMatch=!expected||expected===body.buildFingerprint;serviceIdentity=ready?{endpoint,instanceId:body.instanceId,startedAt:body.startedAt,buildFingerprint:body.buildFingerprint,protocolVersion:body.protocolVersion,modelVersion:body.modelVersion,capabilities:body.capabilities,buildMatch}:null;return{available:ready&&jobSupport,endpoint,actualEndpoint:body.endpoint||null,instanceId:body.instanceId||null,startedAt:body.startedAt||null,buildFingerprint:body.buildFingerprint||null,protocolVersion:body.protocolVersion||null,modelVersion:body.modelVersion||null,capabilities:body.capabilities||[],dependencies:body.dependencies||null,buildMatch,compatibility:ready&&jobSupport?(buildMatch?'COMPATIBLE':'COMPATIBLE_BUILD_DIFFERS'):'INCOMPATIBLE',reason:!response.ok?'HTTP_ERROR':!body.available?'DEPENDENCY_UNAVAILABLE':!protocol?'PROTOCOL_OR_MODEL_MISMATCH':!actualEndpoint?'ENDPOINT_MISMATCH':!identity?'INSTANCE_IDENTITY_MISSING':missing.length?`MISSING_CAPABILITY:${missing.join(',')}`:!jobSupport?'JOBS_UNAVAILABLE':null,jobsV6:jobSupport};}catch(error){jobSupport=false;serviceIdentity=null;return{available:false,endpoint,compatibility:'INCOMPATIBLE',error:error.message};}}
+    async function health(scope='OUTBOUND_ONLY'){
+      const config=globalThis.STCT_CONFIG||{};
+      const buildPolicy=options.buildPolicy??config.optimizerBuildPolicy??'STRICT_PINNED';
+      const expected=Object.hasOwn(options,'expectedBuildFingerprint')?options.expectedBuildFingerprint:(config.expectedOptimizerBuildFingerprint??null);
+      const expectedValid=typeof expected==='string'&&/^[a-f0-9]{64}$/.test(expected);
+      try{
+        const {response,body}=await jsonRequest(endpoint.replace(/\/facility-optimize-v19(?:\?.*)?$/,'/health'),{method:'GET'},5000);
+        const capabilities=Array.isArray(body?.capabilities)?body.capabilities:[];
+        const required=['FACILITY','SUPPLY_CHAIN_JOBS_V6',...(['UPSTREAM_ONLY','FULL_CHAIN'].includes(scope)?[scope]:[])];
+        const missing=required.filter(value=>!capabilities.includes(value));
+        const protocol=body?.protocolVersion==='stct-supply-chain-jobs-v6'&&body?.modelVersion==='v6-cp-sat-1';
+        const actualEndpoint=body?.endpoint===new URL(endpoint).origin;
+        const identity=Boolean(typeof body?.instanceId==='string'&&body.instanceId&&body.startedAt&&/^[a-f0-9]{64}$/.test(body.buildFingerprint||''));
+        const buildMatch=expectedValid&&expected===body?.buildFingerprint;
+        const policyValid=['STRICT_PINNED','COMPATIBLE_WARN'].includes(buildPolicy);
+        // Compatibility is not release admission. Missing or mismatched pins fail closed.
+        const pinReason=!policyValid?'BUILD_POLICY_INVALID':buildPolicy==='STRICT_PINNED'?(!expectedValid?'EXPECTED_BUILD_FINGERPRINT_REQUIRED':!buildMatch?'BUILD_FINGERPRINT_MISMATCH':null):null;
+        const reason=!response.ok?'HTTP_ERROR':!body?.available||!body?.dependencies?.supplyChainReady?'DEPENDENCY_UNAVAILABLE':!protocol?'PROTOCOL_OR_MODEL_MISMATCH':!actualEndpoint?'ENDPOINT_MISMATCH':!identity?'INSTANCE_IDENTITY_MISSING':missing.length?`MISSING_CAPABILITY:${missing.join(',')}`:body?.supplyChainJobsV6!==true?'JOBS_UNAVAILABLE':pinReason;
+        const available=reason===null;
+        jobSupport=available;
+        serviceIdentity=available?{endpoint,instanceId:body.instanceId,startedAt:body.startedAt,buildFingerprint:body.buildFingerprint,protocolVersion:body.protocolVersion,modelVersion:body.modelVersion,capabilities,buildMatch,buildPolicy,expectedBuildFingerprint:expected}:null;
+        return{available,endpoint,actualEndpoint:body?.endpoint||null,instanceId:body?.instanceId||null,startedAt:body?.startedAt||null,buildFingerprint:body?.buildFingerprint||null,protocolVersion:body?.protocolVersion||null,modelVersion:body?.modelVersion||null,capabilities,dependencies:body?.dependencies||null,buildMatch,buildPolicy,expectedBuildFingerprint:expected,compatibility:available?(buildMatch?'COMPATIBLE':expectedValid?'COMPATIBLE_BUILD_DIFFERS':'COMPATIBLE_BUILD_UNPINNED'):'INCOMPATIBLE',reason,jobsV6:jobSupport};
+      }catch(error){jobSupport=false;serviceIdentity=null;return{available:false,endpoint,buildPolicy,compatibility:'INCOMPATIBLE',error:error.message};}
+    }
     async function save(){
       if(!repository||!state.study)fail('SUPPLY_STUDY_REQUIRED');
-      const savedRevision=revision,savedLineage=saveLineage,study=state.study,profile=state.profile,scenario=state.scenario,snapshotValue=state.snapshot,staleResult=state.staleResult;
+      const savedRevision=revision,savedLineage=saveLineage,study=state.study,profile=state.profile,scenario=state.scenario,snapshotValue=state.snapshot,staleResult=state.staleResult,boundPointer=state.savedPointer;
       if(snapshotValue)(snapshotValue.schemaVersion==='stct-supply-chain-v5-snapshot-v1'?V5:Report).assertCurrent(study,snapshotValue);
       const studyId=study.inputHash,records={supplyStudies:[repository.record(studyId,study)]},refs=[{store:'supplyStudies',id:studyId}];
       if(snapshotValue){const snapshotId=snapshotValue.snapshotHash;records.supplySnapshots=[repository.record(snapshotId,snapshotValue)];refs.push({store:'supplySnapshots',id:snapshotId});}
       if(profile){const profileId=Design.hash(profile);records.supplyProfiles=[repository.record(profileId,profile)];refs.push({store:'supplyProfiles',id:profileId});}
       const pointerId=`SUPPLY:${study.studyId}`,old=await repository.read('pointers',pointerId);
-      const adoptExisting=!state.savedPointer&&old&&old.type==='SUPPLY_CHAIN_STUDY'&&!old.deleted;const expectedRevision=state.savedPointer?.id===pointerId?state.savedPointer.revision:(adoptExisting?old.revision:0);if((old?.revision||0)!==expectedRevision)fail('REVISION_CONFLICT',{expected:expectedRevision,current:old?.revision||0,adopted:adoptExisting||undefined});
+      // Only a session explicitly bound by save/reopen/openVersion can update this ID.
+      // Imported packages (including byte-identical imports) must never adopt a live revision.
+      if(revision!==savedRevision||saveLineage!==savedLineage)fail('SUPPLY_SAVE_OBSOLETE');
+      const bound=boundPointer?.id===pointerId;
+      const expectedRevision=bound?boundPointer.revision:0;
+      if(old&&(!bound||old.deleted||old.type!=='SUPPLY_CHAIN_STUDY'))fail('REVISION_CONFLICT',{expected:expectedRevision,current:old.revision||0,reason:!bound?'UNBOUND_STUDY_ID_EXISTS':'SAVED_STUDY_UNAVAILABLE',pointerId});
+      if((old?.revision||0)!==expectedRevision)fail('REVISION_CONFLICT',{expected:expectedRevision,current:old?.revision||0});
       const historySnapshotHashes=[...new Set([...(old?.historySnapshotHashes||[]),...(old?.snapshotHash&&old.snapshotHash!==snapshotValue?.snapshotHash?[old.snapshotHash]:[])])];
       for(const id of historySnapshotHashes)refs.push({store:'supplySnapshots',id});
-      const pointer={id:pointerId,scope:'DESIGN',type:'SUPPLY_CHAIN_STUDY',name:state.savedPointer?.inputHash===studyId?state.savedPointer.name:study.name,projectId:state.savedPointer?.projectId||`PROJECT:${study.assumptions?.demandGrowth?.rootStudyId||study.assumptions?.demandGrowth?.parentStudyId||study.studyId}`,route:'/design/supply-chain-study',inputHash:studyId,snapshotHash:snapshotValue?.snapshotHash||null,historySnapshotHashes,status:snapshotValue?'COMPLETE':'DRAFT',scenario:clone(scenario),staleResult:clone(staleResult),refs};
-      if(revision!==savedRevision)fail('SUPPLY_SAVE_OBSOLETE');
+      const pointer={id:pointerId,scope:'DESIGN',type:'SUPPLY_CHAIN_STUDY',name:boundPointer?.inputHash===studyId?boundPointer.name:study.name,projectId:boundPointer?.projectId||`PROJECT:${study.assumptions?.demandGrowth?.rootStudyId||study.assumptions?.demandGrowth?.parentStudyId||study.studyId}`,route:'/design/supply-chain-study',inputHash:studyId,snapshotHash:snapshotValue?.snapshotHash||null,historySnapshotHashes,status:snapshotValue?'COMPLETE':'DRAFT',scenario:clone(scenario),staleResult:clone(staleResult),refs};
+      if(revision!==savedRevision||saveLineage!==savedLineage)fail('SUPPLY_SAVE_OBSOLETE');
       const saved=await repository.commit({records,pointer,expectedRevision,action:snapshotValue?'SAVE_SUPPLY_STUDY':'SAVE_SUPPLY_DRAFT'});
       // A durable receipt advances this editing session even when newer inputs are unsaved.
       // Loading/reopening another study changes the lineage; its pointer must stay untouched.
@@ -250,7 +279,8 @@
       const pointers=await repository.read('pointers');checkInput(token);
       const selfId=`SUPPLY:${study.studyId}`;
       const coordOf=nodes=>new Map(((nodes||[])).map(n=>[n.nodeId,Array.isArray(n.coordinate)?n.coordinate.join(','):null]));
-      const coord=coordOf(study.nodes);
+      const coord=coordOf(study.nodes),nodesById=new Map(study.nodes.map(node=>[node.nodeId,node]));
+      const roadConfig={...globalThis.STCT_CONFIG,...options.roadConfig};
       const cands=(pointers||[]).filter(p=>p&&p.type==='SUPPLY_CHAIN_STUDY'&&!p.deleted&&p.id!==selfId&&Array.isArray(p.refs)).sort((a,b)=>String(b.savedAt||'').localeCompare(String(a.savedAt||'')));
       for(const p of cands.slice(0,8)){
         const ref=(p.refs||[]).find(r=>r&&r.store==='supplyStudies');
@@ -259,7 +289,7 @@
         checkInput(token);const rows=(payload&&Array.isArray(payload.distanceRows))?payload.distanceRows:[];
         if(!rows.length)continue;
         const oldCoord=coordOf(payload.nodes);
-        const valid=rows.filter(r=>{if(!r||!['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)||r.distanceKm==null||payload.coordinateUse!==study.coordinateUse)return false;const a=oldCoord.get(r.fromNodeId),b=oldCoord.get(r.toNodeId),na=coord.get(r.fromNodeId),nb=coord.get(r.toNodeId);return a!=null&&a===na&&b!=null&&b===nb;});
+        const valid=rows.filter(r=>{if(!r||!['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)||r.distanceKm==null||payload.coordinateUse!==study.coordinateUse)return false;const a=oldCoord.get(r.fromNodeId),b=oldCoord.get(r.toNodeId),na=coord.get(r.fromNodeId),nb=coord.get(r.toNodeId);return a!=null&&a===na&&b!=null&&b===nb&&Road.reuseAssessment(r,nodesById.get(r.fromNodeId)?.coordinate,nodesById.get(r.toNodeId)?.coordinate,study.coordinateUse,roadConfig).reusable;});
         if(valid.length)return{rows:valid,fromStudy:(payload&&payload.name)||p.name||p.id,fromStudyId:payload.studyId,total:rows.length,token};
       }
       return null;

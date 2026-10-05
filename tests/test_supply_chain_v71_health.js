@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const C=require('../supply-chain-controller-v19.js');
 const endpoint='http://127.0.0.1:19095/facility-optimize-v19';
 const base={available:true,supplyChainJobsV6:true,endpoint:'http://127.0.0.1:19095',instanceId:'test-instance',startedAt:'2026-09-27T00:00:00Z',buildFingerprint:'a'.repeat(64),protocolVersion:'stct-supply-chain-jobs-v6',modelVersion:'v6-cp-sat-1',capabilities:['FACILITY','SUPPLY_CHAIN_JOBS_V6','UPSTREAM_ONLY','FULL_CHAIN'],dependencies:{supplyChainReady:true}};
-const make=(body,expectedBuildFingerprint)=>C.createController({endpoint,expectedBuildFingerprint,fetch:async()=>({ok:true,json:async()=>body})});
+const make=(body,expectedBuildFingerprint)=>C.createController({endpoint,buildPolicy:'COMPATIBLE_WARN',expectedBuildFingerprint,fetch:async()=>({ok:true,json:async()=>body})});
 (async()=>{
   const matched=await make(base,'a'.repeat(64)).health();
   assert.equal(matched.available,true);assert.equal(matched.compatibility,'COMPATIBLE');assert.equal(matched.endpoint,endpoint);

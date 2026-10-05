@@ -19,12 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "stct-local-trial-v1"
 LOCAL_HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 PROTECTED_PORTS = frozenset((8787, 8877, 8791))
-BUILD_FILES = ("ortools_service.py", "canonical_contract.py", "facility_mvp1.py", "supply_chain_joint_v19.py", "supply_chain_jobs_v6.py")
+sys.path.insert(0, str(ROOT))
+from optimizer.build_identity import verified_identity
 
 
 def expected_build():
-    return hashlib.sha256(b"".join(name.encode("utf-8") + b"\0" +
-        (ROOT / "optimizer" / name).read_bytes() for name in BUILD_FILES)).hexdigest()
+    return verified_identity(ROOT)["fingerprint"]
 
 
 def run_dir():

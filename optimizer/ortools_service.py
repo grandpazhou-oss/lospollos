@@ -58,6 +58,13 @@ if os.environ.get("DISABLE_ORTOOLS", "").strip().lower() in {"1", "true", "yes"}
     pywrapcp = None
     routing_enums_pb2 = None
 
+try:
+    from build_identity import verified_identity
+    from solve_admission import SOLVE_ADMISSION, SolverBusy
+except ImportError:
+    from optimizer.build_identity import verified_identity
+    from optimizer.solve_admission import SOLVE_ADMISSION, SolverBusy
+
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("OPT_PORT", "8787"))
 MAX_SOLVE_SECONDS = max(5, min(120, int(os.environ.get("MAX_SOLVE_SECONDS", "45"))))
@@ -95,11 +102,9 @@ def utc_now() -> str:
 
 STARTED_AT = utc_now()
 INSTANCE_ID = uuid.uuid4().hex
-_BUILD_FILES = ("ortools_service.py", "canonical_contract.py", "facility_mvp1.py", "supply_chain_joint_v19.py", "supply_chain_jobs_v6.py")
-BUILD_FINGERPRINT = hashlib.sha256(b"".join(
-    name.encode("utf-8") + b"\0" + (Path(__file__).parent / name).read_bytes()
-    for name in _BUILD_FILES
-)).hexdigest()
+_RUNTIME_MANIFEST = verified_identity()
+_BUILD_FILES = tuple(row["path"] for row in _RUNTIME_MANIFEST["files"])
+BUILD_FINGERPRINT = _RUNTIME_MANIFEST["fingerprint"]
 SUPPLY_PROTOCOL_VERSION = "stct-supply-chain-jobs-v6"
 SUPPLY_MODEL_VERSION = "v6-cp-sat-1"
 
@@ -1083,6 +1088,10 @@ MAX_REQUEST_BYTES = 64 * 1024 * 1024
 
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(10)
+
     def _local_origin(self) -> bool:
         host = urlsplit("http://" + self.headers.get("Host", "")).hostname
         if host not in {"127.0.0.1", "localhost"}:
@@ -1182,7 +1191,7 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
                 self._send(400, {"error": {"code": "SUPPLY_JOB_SPEC_INVALID", "details": {}}})
             return
-        if not self.path.startswith("/optimize") and not self.path.startswith("/reoptimize-v16") and not self.path.startswith("/facility-optimize-v19") and not self.path.startswith("/supply-chain-optimize-v19"):
+        if urlsplit(self.path).path not in {"/optimize", "/reoptimize-v16", "/facility-optimize-v19", "/supply-chain-optimize-v19"}:
             self._send(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found", "details": {}}})
             return
         if pywrapcp is None or ((self.path.startswith("/facility-optimize-v19") or self.path.startswith("/supply-chain-optimize-v19")) and cp_model is None):
@@ -1191,6 +1200,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send(503, {"ok": False, "engine": "Demo Heuristic", "error": {"code": "ORTOOLS_UNAVAILABLE", "message": "OR-Tools is unavailable; use the explicitly labelled Demo Heuristic fallback.", "details": {}}})
             return
+        solve_lease = None
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length > MAX_REQUEST_BYTES:
@@ -1199,11 +1209,17 @@ class Handler(BaseHTTPRequestHandler):
             if length <= 0 or length > 20_000_000:
                 raise ValueError("Request body is empty or exceeds the local demo limit.")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Request must be a JSON object")
+            candidate_lease = uuid.uuid4().hex
+            SOLVE_ADMISSION.acquire(candidate_lease)
+            solve_lease = candidate_lease
+            deadline = time.monotonic() + MAX_SOLVE_SECONDS
             if self.path.startswith("/supply-chain-optimize-v19"):
-                self._send(200, solve_joint(payload, cp_model, getattr(ortools_package, "__version__", "unknown")))
+                self._send(200, solve_joint(payload, cp_model, getattr(ortools_package, "__version__", "unknown"), deadline=deadline))
                 return
             if self.path.startswith("/facility-optimize-v19"):
-                self._send(200, solve_facility(payload, cp_model, getattr(ortools_package, "__version__", "unknown")))
+                self._send(200, solve_facility(payload, cp_model, getattr(ortools_package, "__version__", "unknown"), deadline=deadline))
                 return
             if self.path.startswith("/reoptimize-v16"):
                 result = solve_rolling(
@@ -1242,6 +1258,8 @@ class Handler(BaseHTTPRequestHandler):
                 "requestId": (payload or {}).get("requestId"),
                 "plan": plan,
             })
+        except SolverBusy:
+            self._send(429, {"error": {"code": "SUPPLY_JOB_BUSY", "details": {"retryable": True}}})
         except CanonicalError as exc:
             self._send(400, {"ok": False, "engine": "OR-Tools", "error": {"code": exc.code, "message": str(exc), "details": exc.details}})
         except (RollingSolveError, RoutingContractError) as exc:
@@ -1255,6 +1273,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             print(f"optimizer_internal_error {type(exc).__name__}: {exc}", flush=True)
             self._send(500, {"ok": False, "engine": "OR-Tools", "error": {"code": "OPTIMIZER_INTERNAL_ERROR", "message": "The optimizer could not process this request.", "details": {}}})
+
+        finally:
+            if solve_lease is not None:
+                SOLVE_ADMISSION.release(solve_lease)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print(fmt % args, flush=True)

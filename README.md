@@ -1,3 +1,5 @@
+> **2026-10-06 加固候选：** 当前分支的启动、已修复项、测试命令与未验收边界以 [CURRENT_STATE.md](CURRENT_STATE.md) 为准。以下保留历史版本说明；旧 clean-dist 构建脚本不是本分支的完整发布入口。
+
 # Smart Transportation Control Tower v1.5.1 Integrity Closed
 
 本仓库当前提供一个仅用于本地演示与验收的 Smart Transportation Control Tower（STCT）。它不是生产部署包，也不包含生产级身份认证、权限隔离、在线地图可用性承诺或企业数据接口。
