@@ -78,7 +78,7 @@
     const candidates=snapshot.rows.map((row,index)=>restore(row,request,index+1)),fresh=createSnapshot(study,snapshot.baseline,scenario,reference,candidates,snapshot.solverRuns,request,snapshot.backendIdentity);
     Design.assertResultEquivalent(fresh,snapshot,'snapshot',['snapshotHash']);
   }
-  function assertCurrent(study,snapshot){Design.assertStudyCurrent(study);if(snapshot?.studyHash!==study.inputHash||!trustedSnapshots.has(snapshot)&&snapshot.snapshotHash!==Design.hashBodyMemoized(snapshot,'snapshotHash'))throw Object.assign(new Error('SUPPLY_SNAPSHOT_STALE'),{code:'SUPPLY_SNAPSHOT_STALE'});if(!trustedSnapshots.has(snapshot))verifyImported(study,snapshot);Design.deepFreeze(snapshot);trustedSnapshots.add(snapshot);}
+  function assertCurrent(study,snapshot){Design.assertStudyCurrent(study);const trusted=trustedSnapshots.has(snapshot);if(snapshot?.studyHash!==study.inputHash||!trusted&&snapshot.snapshotHash!==Design.hashBodyMemoized(snapshot,'snapshotHash'))throw Object.assign(new Error('SUPPLY_SNAPSHOT_STALE'),{code:'SUPPLY_SNAPSHOT_STALE'});if(!trusted){Design.deepFreeze(snapshot);verifyImported(study,snapshot);}Design.deepFreeze(snapshot);trustedSnapshots.add(snapshot);}
   const num=value=>value==null?'—':Number(value).toLocaleString('zh-CN',{maximumFractionDigits:6});
   const pct=value=>value==null?'—':`${(value*100).toFixed(2)}%`;
   const statusText=(value,locale='zh')=>({PASS:['通过','Pass','確認済み'],UNKNOWN:['未核验','Unverified','未検証'],EXCEEDED:['超限','Exceeded','超過'],OPTIMAL:['模型最优','Model optimal','モデル最適'],FEASIBLE:['可行未证最优','Feasible; optimum unproven','実行可能・最適未証明'],INFEASIBLE:['不可行','Infeasible','実行不可']}[value]||[value,value,value])[locale==='en'?1:locale==='ja'?2:0];
