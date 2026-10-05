@@ -22,7 +22,8 @@
     roadRequestTimeoutMs:10000,
     roadBudgetMs:120000,
     roadMaxSnapMeters:1000,
-    roadNetworkVersion:null,
+    // Update with the local OSRM extract ID whenever its OSM network data changes.
+    roadNetworkVersion:'china-260928-arterial-ferry-mld',
     allowPublicRoutingPreview:false,
     coordinateDisclosureAccepted:false,
     forceHeuristic:['1','true','yes'].includes(String(params.get('forceHeuristic')||'').toLowerCase()),

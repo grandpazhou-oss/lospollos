@@ -34,7 +34,9 @@
       if(body.waypoints.some(w=>w.distance>config.maxSnapMeters)||measuredSnapMeters.some(distance=>distance>config.maxSnapMeters))fail('ROAD_SNAP_LIMIT_EXCEEDED',{maxSnapMeters:config.maxSnapMeters});
       const geometry=result.geometry?.coordinates;
       if(options.geometry&&(!Array.isArray(geometry)||geometry.length<2||!geometry.every(coordinate)))fail('ROAD_GEOMETRY_INVALID');
-      return {distanceKm:result.distance/1000,travelSeconds:result.duration,unit:'km',quality:'ESTIMATED_ROAD',source:'OSRM_LOCAL',strategy:'ROUTE_DRIVING',observedAt:new Date().toISOString(),geometry:options.geometry?geometry:undefined,evidence:{endpoint:config.endpoint,profile:config.profile,networkVersion:config.networkVersion,coordinateUse:options.coordinateUse,requestedCoordinates:coords,snappedCoordinates:body.waypoints.map(w=>w.location),snapMeters:body.waypoints.map(w=>w.distance),measuredSnapMeters,verification:'ENGINE_CALCULATED_NOT_MANUALLY_VERIFIED',truckRestrictions:'NOT_VERIFIED',traffic:'NOT_MODELED'}};
+      const row={distanceKm:result.distance/1000,travelSeconds:result.duration,unit:'km',quality:'ESTIMATED_ROAD',source:'OSRM_LOCAL',strategy:'ROUTE_DRIVING',observedAt:new Date().toISOString(),evidence:{endpoint:config.endpoint,profile:config.profile,networkVersion:config.networkVersion,coordinateUse:options.coordinateUse,requestedCoordinates:coords,snappedCoordinates:body.waypoints.map(w=>w.location),snapMeters:body.waypoints.map(w=>w.distance),measuredSnapMeters,verification:'ENGINE_CALCULATED_NOT_MANUALLY_VERIFIED',truckRestrictions:'NOT_VERIFIED',traffic:'NOT_MODELED'}};
+      if(options.geometry)row.geometry=geometry;
+      return row;
     }finally{clearTimeout(timer);signal?.removeEventListener('abort',onAbort);}
   }
   async function matrix(study,pairs,options={}){
