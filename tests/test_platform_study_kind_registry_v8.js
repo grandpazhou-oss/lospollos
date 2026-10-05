@@ -174,5 +174,13 @@ const scenario = { scenarioId: "CASE", type: "NETWORK_CANDIDATE", objective: "VO
   assert.equal((await lateOpen).status, "SUPERSEDED");
   assert.equal(raceContext.snapshot().current.studyId, "DEMO-B");
   assert.deepEqual(registry.capabilities("OPERATIONS_PLAN").canOpen, false);
+  const validationPointer = { id: "VALIDATION:SYNTHETIC", type: "OPERATIONAL_VALIDATION", refs: [] };
+  repository.seed(validationPointer);
+  const beforeValidationExport = context.snapshot();
+  assert.equal(registry.kindForPointer(validationPointer), null, "validation is an attachment, not an editable supply study");
+  assert.deepEqual(await registry.exportPackage(validationPointer.id), { exported: [validationPointer.id] });
+  assert.deepEqual(context.snapshot(), beforeValidationExport);
+  const refusedExport = Registry.createRegistry({ repository, legacyService: { ...legacyService, exportPackage: async () => { throw Object.assign(new Error("DEPENDENCY_MISSING"), { code: "DEPENDENCY_MISSING" }); } }, context });
+  await assert.rejects(refusedExport.exportPackage(validationPointer.id), { code: "DEPENDENCY_MISSING" });
   console.log(JSON.stringify({ status: "PASS", test: "platform-study-kind-registry-v8", method: "SYNTHETIC_PUBLIC_CONTROLLER_NO_SOLVER", typedOpen: true, packageIntegrity: true, nonCurrentCatalogExport: true, facilityPackage: true, copyPreservesOriginal: true, noImplicitDemo: true }));
 })().catch((error) => { console.error(error.stack); process.exitCode = 1; });

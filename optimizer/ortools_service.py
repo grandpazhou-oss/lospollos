@@ -1079,14 +1079,19 @@ def solve(payload: dict[str, Any]) -> dict[str, Any]:
     return attach_trust_identity(plan, data)
 
 
+MAX_REQUEST_BYTES = 64 * 1024 * 1024
+
+
 class Handler(BaseHTTPRequestHandler):
     def _local_origin(self) -> bool:
         host = urlsplit("http://" + self.headers.get("Host", "")).hostname
         if host not in {"127.0.0.1", "localhost"}:
             return False
         origin = self.headers.get("Origin")
-        if not origin or origin == "null":
+        if origin is None:
             return True
+        if not origin or origin == "null":
+            return False
         parsed = urlsplit(origin)
         return parsed.scheme in {"http", "https"} and parsed.hostname in {"127.0.0.1", "localhost"} and not parsed.username and not parsed.password
 
@@ -1148,7 +1153,7 @@ class Handler(BaseHTTPRequestHandler):
                 "buildFiles": list(_BUILD_FILES),
                 "protocolVersion": SUPPLY_PROTOCOL_VERSION,
                 "modelVersion": SUPPLY_MODEL_VERSION,
-                "capabilities": ["FACILITY", "SUPPLY_CHAIN_JOBS_V6", "UPSTREAM_ONLY", "FULL_CHAIN", "QUANTITY_SCALE_V2"] if supply_ready else [],
+                "capabilities": ["FACILITY", "SUPPLY_CHAIN_JOBS_V6", "UPSTREAM_ONLY", "FULL_CHAIN", "QUANTITY_SCALE_V2", "FACILITY_ACTIVATION_COST_V86"] if supply_ready else [],
                 "dependencies": {"ortools": available, "cpSat": cp_model is not None, "supplyChainReady": supply_ready},
             })
         else:
@@ -1164,6 +1169,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, job_identity(JOBS.cancel(self.path.split("/")[2])))
                     return
                 length = int(self.headers.get("Content-Length", "0"))
+                if length > MAX_REQUEST_BYTES:
+                    self._send(413, {"error": {"code": "REQUEST_TOO_LARGE", "details": {"limit": MAX_REQUEST_BYTES}}})
+                    return
                 if self.path != "/supply-chain-jobs-v6" or not 0 < length <= 20_000_000:
                     raise JobError("SUPPLY_JOB_SPEC_INVALID")
                 if pywrapcp is None or cp_model is None:
@@ -1185,6 +1193,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length > MAX_REQUEST_BYTES:
+                self._send(413, {"error": {"code": "REQUEST_TOO_LARGE", "details": {"limit": MAX_REQUEST_BYTES}}})
+                return
             if length <= 0 or length > 20_000_000:
                 raise ValueError("Request body is empty or exceeds the local demo limit.")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))

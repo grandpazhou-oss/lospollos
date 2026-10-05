@@ -68,7 +68,7 @@ html,body{height:100%;font-family:'Noto Sans JP','PingFang SC','SF Pro Text','He
 }
 </style>
 </head>
-<body>
+<body><div role="note" style="position:fixed;z-index:10000;bottom:12px;left:12px;right:12px;padding:12px 16px;background:#fff7e6;border:1px solid #b86b00;border-radius:6px;color:#382300;font:14px/1.5 system-ui">旧版配送路线工具 / Legacy delivery tool / 旧配送ツール · <a id="currentPlatformEntry" href="index.html#/" style="color:#003b79;font-weight:700">打开当前 STCT 主系统 / Open current STCT</a></div><script>document.getElementById("currentPlatformEntry").href="index.html"+location.search+"#/";</script>
 
 <div class="login-page">
   <div class="login-brand">
@@ -133,7 +133,7 @@ html,body{height:100%;font-family:'Noto Sans JP','PingFang SC','SF Pro Text','He
 <script>
 (function(){
   if (sessionStorage.getItem('ct_logged_in') === 'true' || localStorage.getItem('ct_remember') === 'true') {
-    window.location.replace('dispatch.html');
+    window.location.replace('dispatch.html'+location.search);
   }
   var u = localStorage.getItem('ct_user');
   if (u) { document.getElementById('username').value = u; document.getElementById('remember').checked = true; }
@@ -154,7 +154,7 @@ function handleLogin(e) {
       sessionStorage.setItem('ct_logged_in', 'true'); sessionStorage.setItem('ct_user', username);
       if (remember) { localStorage.setItem('ct_remember', 'true'); localStorage.setItem('ct_user', username); }
       else { localStorage.removeItem('ct_remember'); }
-      window.location.replace('dispatch.html');
+      window.location.replace('dispatch.html'+location.search);
     } else {
       err.textContent = 'Invalid username or password. Please try again.'; err.style.display = 'block';
     }

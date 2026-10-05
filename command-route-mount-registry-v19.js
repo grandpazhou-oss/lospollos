@@ -11,6 +11,10 @@
 
   const SCHEMA_VERSION = "stct-command-route-mount-registry-v1.9-p3";
   const ROUTES = Object.freeze([
+    ["command-analysis", "/command/analysis", "TRANSPORT_ANALYSIS", ["Planning"], ["planningState"]],
+    ["command-cost", "/command/cost", "TRANSPORT_COST", ["Planning"], ["planningState"]],
+    ["command-carbon", "/command/carbon", "TRANSPORT_CARBON", ["Planning"], ["planningState"]],
+    ["command-report", "/command/report", "TRANSPORT_REPORT", ["Planning"], ["planningState"]],
     ["command-overview", "/command/overview", "OPERATIONS_COCKPIT", ["OperationsWorkspace", "ExecutionStore", "AlertStore"], ["operationsWorkspace", "executionStore", "alertStore"]],
     ["command-dispatch", "/command/dispatch", "DISPATCH_WORKBENCH", ["CanonicalScenario", "Planning", "Verifier"], ["planningState", "canonicalScenario", "verifier"]],
     ["command-mission-control", "/command/mission-control", "MISSION_CONTROL", ["SimulationStore", "FleetReplay", "MapLayerRegistry"], ["simulationStore", "replayController", "mapLayerRegistry"]],

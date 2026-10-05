@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>STCT 修复批次1 · 红灯测试运行器（repros）</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 18px 22px; background: #0c141c; color: #e8eef2; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p.note { color: #9db4c0; font-size: 12px; margin: 2px 0 12px; }
+  button { cursor: pointer; padding: 6px 14px; border: 1px solid #4a6272; background: #15222c; color: #dfe8ee; border-radius: 6px; }
+  button:hover { background: #1c2f3c; }
+  #summary { margin: 12px 0; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border-bottom: 1px solid #24404f; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #13222c; }
+  td.wrap { white-space: normal; word-break: break-all; }
+  td .sub { color: #9db4c0; font-size: 12px; }
+  pre { background: #101d26; border: 1px solid #24404f; border-radius: 8px; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  .pass { color: #7fd6a2; font-weight: 600; }
+  .fail { color: #ff8f7a; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>STCT 修复批次1 · 红灯测试运行器</h1>
+<p class="note">按顺序加载被测 UMD 模块与测试向量；每个测试独立执行，结果同时写入 <code>window.__testResults</code>。自动化可调用 <code>window.__runAll()</code> 或点击下方按钮。</p>
+<button type="button" id="run">运行全部（__runAll）</button>
+<div id="summary">尚未运行。</div>
+<table>
+  <thead><tr><th>测试ID</th><th>期望</th><th>实际</th><th>PASS/FAIL</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<h2 style="font-size:14px;margin:16px 0 6px">汇总 JSON（window.__testResults）</h2>
+<pre id="json">null</pre>
+
+<!-- 被测模块（按依赖顺序加载；全部通过 <script> 原生加载，无打包器） -->
+<script src="../integrity-hash-v151.js?v=1001"></script>
+<script src="../network-contract-v18.js?v=1001"></script>
+<script src="../supply-chain-import-v19.js?v=1001"></script>
+<script src="../supply-chain-design-v19.js?v=1001"></script>
+<script src="../supply-chain-explanation-v19.js?v=1.9.0-supply-calcfix1"></script>
+<script src="../supply-chain-report-v19.js?v=1.9.0-supply-calcfix1"></script>
+<script src="../supply-chain-joint-v19.js?v=1001"></script>
+<script src="../supply-chain-v5-results-v19.js?v=1001"></script>
+<script src="../supply-chain-controller-v19.js?v=1001"></script>
+<script src="../platform-repository-v19.js?v=1001"></script>
+<script src="../supply-chain-report-view-v19.js?v=31-calcfix1"></script>
+
+<!-- 测试基础设施与测试文件（每个文件向 window.__tests 注册一项） -->
+<script src="helpers_memrepo.js?v=1001"></script>
+<script src="t_f03_tolerant_atomic.js?v=1001"></script>
+<script src="t_f04_tolerant_leak.js?v=1001"></script>
+<script src="t_f06_open_version_race.js?v=1001"></script>
+<script src="t_f07_delete_save_race.js?v=1001"></script>
+<script src="t_f12_report_assert.js?v=1001"></script>
+<script src="t_f05_closure_cost.js?v=1001"></script>
+<script src="t_f01_no_hardcoded_talk.js?v=1001"></script>
+<script src="t_f02_schema_dispatch.js?v=1001"></script>
+<script src="t_f08_demand_record_count.js?v=1001"></script>
+<script src="t_f18_closure_definition.js?v=1001"></script>
+<script src="t_f19_revision_adoption.js?v=1001"></script>
+
+<script>
+(function (root) {
+  'use strict';
+
+  const format = value => {
+    if (value === null || value === undefined) return '—';
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  };
+
+  const renderRow = (tbody, result) => {
+    const tr = document.createElement('tr');
+    const idCell = document.createElement('td');
+    idCell.innerHTML = '<div>' + String(result.id).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])) + '</div>'
+      + '<div class="sub">' + String(result.title || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])) + '</div>';
+    const expectedCell = document.createElement('td');
+    expectedCell.className = 'wrap';
+    expectedCell.textContent = format(result.expected);
+    const actualCell = document.createElement('td');
+    actualCell.className = 'wrap';
+    actualCell.textContent = format(result.actual);
+    const verdictCell = document.createElement('td');
+    verdictCell.className = result.pass ? 'pass' : 'fail';
+    verdictCell.textContent = result.pass ? 'PASS' : 'FAIL';
+    tr.appendChild(idCell);
+    tr.appendChild(expectedCell);
+    tr.appendChild(actualCell);
+    tr.appendChild(verdictCell);
+    tbody.appendChild(tr);
+  };
+
+  root.__runAll = async () => {
+    const tests = root.__tests || [];
+    const tbody = document.getElementById('rows');
+    tbody.textContent = '';
+    const results = [];
+    const startedAt = new Date().toISOString();
+    for (const test of tests) {
+      let outcome;
+      try {
+        outcome = await test.run();
+      } catch (error) {
+        outcome = { pass: false, expected: test.expected || null, actual: { error: error && (error.code || error.message) || String(error) } };
+      }
+      const result = { id: test.id, title: test.title, pass: Boolean(outcome && outcome.pass), expected: outcome ? outcome.expected : null, actual: outcome ? outcome.actual : null };
+      results.push(result);
+      renderRow(tbody, result);
+    }
+    const summary = {
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      total: results.length,
+      passed: results.filter(row => row.pass).length,
+      failed: results.filter(row => !row.pass).length,
+      results
+    };
+    root.__testResults = summary;
+    document.getElementById('summary').textContent = `共 ${summary.total} 项：PASS ${summary.passed} · FAIL ${summary.failed}`;
+    document.getElementById('json').textContent = JSON.stringify(summary, null, 2);
+    return summary;
+  };
+
+  document.getElementById('run').addEventListener('click', () => { root.__runAll(); });
+  root.__runAll();
+})(window);
+</script>
+</body>
+</html>

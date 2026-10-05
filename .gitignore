@@ -3,3 +3,7 @@
 logs/
 __pycache__/
 *.pyc
+
+# Private results produced by retained local legacy tooling
+backend/legacy-current.json
+backend/legacy-result-*.tmp

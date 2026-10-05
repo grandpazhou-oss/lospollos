@@ -86,6 +86,40 @@ async function waitSupply(page, predicate, timeout = 180000) {
   throw new Error('Supply browser state timed out');
 }
 
+async function assertSupplyComparisonMap(page, current, label) {
+  const panel = page.locator('[data-supply-map-panel]');
+  await panel.waitFor();
+  await panel.locator('.p7-map-schematic svg').waitFor();
+  assert.equal(await panel.getAttribute('data-map-selected-scenario'), await panel.locator('[data-supply-compare="scenarioId"]').inputValue());
+  assert.ok(await panel.locator('.p7-map-schematic polyline').count() > 0, `${label}: no visible assignment relationships`);
+  assert.doesNotMatch(await panel.locator('.sc-map-metric strong').first().innerText(), /—\s*→\s*—/, `${label}: weighted distances must come from the selected snapshot`);
+  assert.match(await panel.locator('.p7-map-legend').innerText(), /不是道路路线|not road routes/i);
+  const before = JSON.parse(await panel.locator('.p7-map-basis pre').textContent());
+  assert.equal(before.snapshotHash, current.snapshot.snapshotHash);
+  assert.equal(before.selectedScenarioId, await panel.getAttribute('data-map-selected-scenario'));
+  await panel.locator('[data-supply-compare="mode"]').selectOption('CANDIDATE');
+  assert.equal(JSON.parse(await panel.locator('.p7-map-basis pre').textContent()).mode, 'CANDIDATE');
+  await panel.locator('[data-supply-compare="period"]').selectOption(current.study.periods[0]);
+  assert.equal(JSON.parse(await panel.locator('.p7-map-basis pre').textContent()).period, current.study.periods[0]);
+  await panel.locator('[data-supply-compare="mode"]').selectOption('BOTH');
+  assert.equal(JSON.parse(await panel.locator('.p7-map-basis pre').textContent()).mode, 'BOTH');
+  const candidates = await panel.locator('[data-supply-compare="scenarioId"] option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
+  if (candidates.length > 1) {
+    const alternate = candidates.find(id => id !== before.selectedScenarioId);
+    await panel.locator('[data-supply-compare="scenarioId"]').selectOption(alternate);
+    assert.equal(await panel.getAttribute('data-map-selected-scenario'), alternate);
+    assert.equal(JSON.parse(await panel.locator('.p7-map-basis pre').textContent()).selectedScenarioId, alternate);
+  }
+  await page.setViewportSize({ width: 390, height: 1200 });
+  assert.ok(await panel.evaluate(node => node.scrollWidth <= node.clientWidth + 2), `${label}: map panel overflows at 390px`);
+  await panel.evaluate(node => node.scrollIntoView({ block: 'start' }));
+  await page.screenshot({ path: evidence(`${label}-map-mobile.png`) });
+  await page.setViewportSize({ width: 1280, height: 1200 });
+  await panel.evaluate(node => node.scrollIntoView({ block: 'start' }));
+  await page.screenshot({ path: evidence(`${label}-map-desktop.png`) });
+  await page.setViewportSize({ width: 1280, height: 800 });
+}
+
 function syntheticWorkbook() {
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
@@ -205,6 +239,9 @@ async function assertSupplyOverviewMap(page, current, snapshotHash) {
     const base = `http://127.0.0.1:${staticPort}/index.html?optPort=${optimizerPort}&noWebGL=1`;
     stage = 'HOME_DEMO_A';
     await loginAtHome(page, base);
+    const routingGuard = await page.evaluate(() => window.fetchOsrmCoords([[120, 30], [121, 31]]).then(() => 'UNEXPECTED_SUCCESS', error => error.message));
+    assert.equal(routingGuard, 'ROAD_COORDINATE_SYSTEM_UNCONFIRMED');
+    assert.equal(summary.externalBlocked.filter(origin => origin.includes('project-osrm.org')).length, 0, 'Default configuration must not disclose coordinates to public OSRM');
     assert.equal(await page.locator('#overviewContent').innerHTML(), '', 'Home must not initialize the old dashboard');
     const startup = await page.evaluate(() => ({
       command: window.STCTPlatformV19.instance.commandAdapter.diagnostics().sharedAuthority,
@@ -245,6 +282,7 @@ async function assertSupplyOverviewMap(page, current, snapshotHash) {
     stage = 'UC_ANALYZE_AND_CATALOG';
     current = await analyzeOutbound(page);
     assert.ok(current.snapshot.rows.length);
+    await assertSupplyComparisonMap(page, current, 'uc-outbound');
     const ucAnalyzedInputHash = current.study.inputHash;
     summary.ucB.analyzedInputHash = ucAnalyzedInputHash;
     summary.ucB.snapshotHash = current.snapshot.snapshotHash;
@@ -348,6 +386,7 @@ async function assertSupplyOverviewMap(page, current, snapshotHash) {
       await syntheticPage.locator('[data-supply-action="analyze"]').click();
       const costStudy = await waitSupply(syntheticPage, s => s?.snapshot?.analysisScope === 'FULL_CHAIN' && s.snapshot.rows?.length > 0, 180000);
       assert.ok(costStudy.snapshot.rows.every(row => Number.isFinite(row.metrics.operatingCost)));
+      await assertSupplyComparisonMap(syntheticPage, costStudy, 'synthetic-full-chain');
       await assertVisibleCurrent(syntheticPage, 'V8 Synthetic C', '/design/cost-to-serve');
       const amount = syntheticPage.locator('[data-v8-cost-amount]:visible').first();
       await amount.waitFor();

@@ -1,12 +1,14 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 const Controller = require('../supply-chain-controller-v19.js');
+const Design = require('../supply-chain-design-v19.js');
 const profile = require('./fixtures/supply-chain-uc-profile-v19.json');
 
 const sourcePath = process.env.STCT_UC_XLSX || path.join(os.homedir(), 'Downloads', '经纬度追加-天津、沈阳、西安、东莞相关入、出库物量数据  202601~07-001 物量数据(1).xlsx');
@@ -19,30 +21,55 @@ const checks = [];
 function check(name, action) { action(); checks.push(name); }
 function sum(rows) { return Math.round(rows.reduce((total, row) => total + row.quantity, 0) * 1000) / 1000; }
 
-const python = [
-  'import json,sys,ortools',
-  'from ortools.sat.python import cp_model',
-  'from facility_mvp1 import solve_facility',
-  'print(json.dumps(solve_facility(json.load(sys.stdin),cp_model,ortools.__version__)))'
-].join('\n');
-const localSolve = async (_endpoint, { body }) => {
-  const run = spawnSync(process.env.STCT_PYTHON || 'python3', ['-c', python], {
-    cwd: path.resolve(__dirname, '../optimizer'), input: body, encoding: 'utf8',
-    timeout: 120000, maxBuffer: 32 * 1024 * 1024
-  });
-  assert.equal(run.status, 0, (run.stderr || '').slice(0, 1200));
-  return { ok: true, json: async () => JSON.parse(run.stdout) };
-};
+const root = path.resolve(__dirname, '..');
+const expectedBuildFingerprint = fs.readFileSync(path.join(root, 'config.js'), 'utf8').match(/expectedOptimizerBuildFingerprint:'([a-f0-9]{64})'/)[1];
+const freePort = () => new Promise((resolve, reject) => {
+  const socket = net.createServer();
+  socket.once('error', reject);
+  socket.listen(0, '127.0.0.1', () => { const port = socket.address().port; socket.close(() => resolve(port)); });
+});
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 (async () => {
+  let service, serviceLog = '';
   try {
+    const port = await freePort();
+    assert.ok(![8787, 9866, 9888].includes(port));
+    const base = `http://127.0.0.1:${port}`;
+    service = spawn(process.env.STCT_PYTHON || 'python3', [path.join(root, 'optimizer/ortools_service.py')], {
+      cwd: root, env: { ...process.env, OPT_PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    for (const stream of [service.stdout, service.stderr]) stream.on('data', value => { serviceLog = (serviceLog + value).slice(-4000); });
+    let ready = false;
+    for (let i = 0; i < 100; i++) {
+      assert.equal(service.exitCode, null, serviceLog);
+      try { ready = (await fetch(`${base}/health`)).ok; } catch (_) {}
+      if (ready) break;
+      await pause(100);
+    }
+    assert.ok(ready, `Isolated optimizer did not start: ${serviceLog}`);
+    const transport = [];
+    const localSolve = async (url, init = {}) => {
+      assert.equal(new URL(url).origin, base);
+      transport.push({ path: new URL(url).pathname, method: init.method || 'GET' });
+      return fetch(url, init);
+    };
+    const controllerOptions = { endpoint: `${base}/facility-optimize-v19`, expectedBuildFingerprint, fetch: localSolve };
     fs.copyFileSync(sourcePath, copyPath);
     check('ORIGINAL_AND_COPY_HASH', () => {
       assert.equal(originalHash, profile.sourceWorkbookSha256);
       assert.equal(crypto.createHash('sha256').update(fs.readFileSync(copyPath)).digest('hex'), originalHash);
     });
 
-    const controller = Controller.createController({ fetch: localSolve });
+    const controller = Controller.createController(controllerOptions);
+    const health = await controller.health();
+    check('ISOLATED_CURRENT_BACKEND_IDENTITY', () => {
+      assert.equal(health.available, true);
+      assert.equal(health.compatibility, 'COMPATIBLE');
+      assert.equal(health.buildFingerprint, expectedBuildFingerprint);
+      assert.equal(health.actualEndpoint, base);
+      assert.equal(health.jobsV6, true);
+    });
     controller.inspect(fs.readFileSync(copyPath), path.basename(copyPath));
     controller.applyProfile(profile, { studyId: 'UC-ACCEPTANCE-2026-01-07', name: 'UC acceptance study', classification: 'BUSINESS_PRIVATE', currency: 'CNY' });
     let state = controller.snapshot();
@@ -116,7 +143,12 @@ const localSolve = async (_endpoint, { body }) => {
     check('LOCAL_OR_TOOLS_CANDIDATES_ONLY', () => {
       assert.equal(state.solverRuns.length, 1);
       assert.equal(state.solverRuns[0].engine.id, 'OR_TOOLS_CP_SAT');
-      assert.equal(state.solverRuns[0].objective, 'OUTBOUND_VOLUME_KM_PROXY');
+      assert.equal(Design.solverRequest(state.study, state.scenario).objective, 'OUTBOUND_VOLUME_KM_PROXY');
+      assert.equal(state.backendIdentity.instanceId, health.instanceId);
+      assert.equal(state.backendIdentity.buildFingerprint, health.buildFingerprint);
+      assert.equal(state.job.status, 'COMPLETE');
+      assert.ok(transport.some(row => row.path === '/supply-chain-jobs-v6' && row.method === 'POST'));
+      assert.ok(transport.some(row => row.path.startsWith('/supply-chain-jobs-v6/') && row.method === 'GET'));
       const signatures = state.candidates.map(row => [...row.selectedSiteIds].sort().join('|'));
       assert.equal(new Set(signatures).size, signatures.length);
       assert.ok(state.candidates.length > 0);
@@ -166,15 +198,20 @@ const localSolve = async (_endpoint, { body }) => {
       assert.equal((outputs[3].match(/<section class="page">/g) || []).length, 4);
       assert.ok(!outputs[3].includes('<th>运输段</th>') && !outputs[3].includes('NO_COMPLETE_COST_RANKING'));
       const packageText = controller.exportPackage();
-      const reopened = Controller.createController({ fetch: localSolve });
+      const reopened = Controller.createController(controllerOptions);
       reopened.importPackage(packageText);
       assert.equal(reopened.snapshot().snapshot.snapshotHash, state.snapshot.snapshotHash);
     });
 
     check('ORIGINAL_UNCHANGED', () => assert.equal(crypto.createHash('sha256').update(fs.readFileSync(sourcePath)).digest('hex'), originalHash));
     const feasible = state.solverRuns[0].results.filter(row => ['OPTIMAL', 'FEASIBLE'].includes(row.status)).length;
-    console.log(JSON.stringify({ suite: 'SUPPLY_CHAIN_UC_STUDY_V19', status: 'PASS', checks, evidence: { originalSha256: originalHash, demandBusinessRows: 257, inboundBusinessRows: 12, demandPeriodRecords: 1799, inboundPeriodRecords: 84, outboundM3: 115934.168, inboundM3: 97370.239, distanceBasis: 'GEOGRAPHIC_SCREENING', coordinateAssumption: 'ASSUMED_WGS84_SCREENING', solverEngine: state.solverRuns[0].engine.id, objective: state.solverRuns[0].objective, solverFeasibleRows: feasible, distinctCandidates: state.candidates.length, candidateTargetReached: state.candidates.length >= 5, recommendation: state.snapshot.recommendation, rankingScope: state.snapshot.rankingScope, exportFormats: ['json', 'csv', 'md', 'html'], reopenHashMatched: true } }, null, 2));
+    console.log(JSON.stringify({ suite: 'SUPPLY_CHAIN_UC_STUDY_V19', status: 'PASS', checks, evidence: { originalSha256: originalHash, demandBusinessRows: 257, inboundBusinessRows: 12, demandPeriodRecords: 1799, inboundPeriodRecords: 84, outboundM3: 115934.168, inboundM3: 97370.239, distanceBasis: 'GEOGRAPHIC_SCREENING', coordinateAssumption: 'ASSUMED_WGS84_SCREENING', solverEngine: state.solverRuns[0].engine.id, objective: Design.solverRequest(state.study, state.scenario).objective, backendBuildFingerprint: health.buildFingerprint, backendInstanceId: health.instanceId, isolatedEndpoint: base, protocol: health.protocolVersion, jobStatus: state.job.status, solverFeasibleRows: feasible, distinctCandidates: state.candidates.length, candidateTargetReached: state.candidates.length >= 5, recommendation: state.snapshot.recommendation, rankingScope: state.snapshot.rankingScope, exportFormats: ['json', 'csv', 'md', 'html'], reopenHashMatched: true } }, null, 2));
   } finally {
+    if (service && service.exitCode === null) {
+      service.kill('SIGTERM');
+      await Promise.race([new Promise(resolve => service.once('exit', resolve)), pause(3000)]);
+      if (service.exitCode === null) { service.kill('SIGKILL'); await new Promise(resolve => service.once('exit', resolve)); }
+    }
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });

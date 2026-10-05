@@ -1771,6 +1771,7 @@ function applyLanguage(lang = currentLang) {
   translateTextNodes();
 }
 const ORIGINAL_DATA = JSON.parse(JSON.stringify(DATA));
+let transportDataApplied = false;
 let RAW_DATA = null;
 let optimizerPlan = null;
 let uploadPreview = null;
@@ -2338,6 +2339,8 @@ const MAP_STYLES = APP_CONFIG.mapStyles || {
   dark: "https://tiles.openfreemap.org/styles/dark",
   bright: "https://tiles.openfreemap.org/styles/bright",
 };
+let legacyMapThemeOverride=false;
+window.addEventListener("stct-theme-change",()=>{if(!legacyMapThemeOverride&&window.map&&map)changeMapTheme(window.STCTPlatformV19?.theme?.basemap(APP_CONFIG)===MAP_STYLES.dark?"dark":"liberty");});
 function changeMapTheme(theme) {
   state.mapTheme = theme;
   syncMapOptionControls();
@@ -2366,43 +2369,36 @@ function roadFeature(routeId, coords) {
     properties: { routeId, color: routeColor(routeId), source: "OSRM preview" },
   };
 }
-function osrmUrl(coords) {
-  return "https://router.project-osrm.org/route/v1/driving/" +
-    coords.map((c) => c[0].toFixed(6) + "," + c[1].toFixed(6)).join(";") +
+/* F15：路网 Provider 统一入口。默认仅本地路网（127.0.0.1:5001）；
+   公共 OSRM 默认禁用——只有用户显式授权（localStorage stct.allowPublicOsrm='1'）才允许携带坐标外发；
+   每次请求写审计日志（端点/坐标范围/策略/结果）。网络失败保留地理筛选身份，不冒充道路。 */
+const PUBLIC_OSRM_ENDPOINT = "https://router.project-osrm.org/route/v1/driving/";
+const LOCAL_OSRM_ENDPOINT = "http://127.0.0.1:5001/route/v1/driving/";
+function publicOsrmAuthorized() {
+  try { return globalThis.localStorage && globalThis.localStorage.getItem("stct.allowPublicOsrm") === "1"; } catch (_) { return false; }
+}
+function osrmAudit(entry) {
+  const rec = Object.assign({ at: new Date().toISOString() }, entry);
+  (globalThis.__stctOsrmAudit = globalThis.__stctOsrmAudit || []).push(rec);
+  console.info("[STCT-OSRM-AUDIT]", JSON.stringify(rec));
+}
+function osrmUrl(coords, base) {
+  return base + coords.map((c) => c[0].toFixed(6) + "," + c[1].toFixed(6)).join(";") +
     "?overview=full&geometries=geojson&steps=false&continue_straight=false";
 }
+function coordRange(coords) {
+  const lons = coords.map((c) => c[0]), lats = coords.map((c) => c[1]);
+  return { minLon: Math.min(...lons), maxLon: Math.max(...lons), minLat: Math.min(...lats), maxLat: Math.max(...lats), points: coords.length };
+}
 async function fetchOsrmCoords(coords) {
-  const res = await fetch(osrmUrl(coords));
-  if (!res.ok) throw new Error("OSRM " + res.status);
-  const json = await res.json();
-  const road = json && json.routes && json.routes[0] &&
-    json.routes[0].geometry && json.routes[0].geometry.coordinates;
-  if (!road || road.length < 2) throw new Error("No road geometry");
-  return road;
+  const config=window.STCT_CONFIG||{};
+  const result=await window.STCTPlatformV19.localRoadClient.route(coords,{...config,coordinateUse:config.roadCoordinateUse||'UNCONFIRMED',geometry:true});
+  osrmAudit({provider:'LOCAL',endpoint:result.evidence.endpoint,policy:'local-only',outcome:'ENGINE_ESTIMATE',roadPoints:result.geometry.length});
+  return result.geometry;
 }
 async function fetchOsrmPreviewGeometry(coords) {
-  try {
-    return await fetchOsrmCoords(coords);
-  } catch (firstErr) {
-    console.warn("Full OSRM route failed, retrying in chunks", firstErr);
-    const merged = [];
-    const size = 8;
-    for (let i = 0; i < coords.length - 1; i += size - 1) {
-      const part = coords.slice(i, Math.min(coords.length, i + size));
-      if (part.length < 2) continue;
-      try {
-        const road = await fetchOsrmCoords(part);
-        if (merged.length && road.length) road.shift();
-        merged.push(...road);
-      } catch (partErr) {
-        console.warn("Chunk OSRM route failed", partErr);
-        if (!merged.length || merged.at(-1) !== part[0]) merged.push(part[0]);
-        merged.push(part.at(-1));
-      }
-    }
-    if (merged.length < 2) throw firstErr;
-    return merged;
-  }
+  // Failed paths are never filled with straight segments and labelled roads.
+  return fetchOsrmCoords(coords);
 }
 function setRoadRouteStatus(text, type = "info") {
   const box = document.getElementById("roadRouteStatus");
@@ -2426,6 +2422,7 @@ async function updateRoadRoutePreview(routeId) {
     setRoadRouteStatus("选择单条路线后，可预览按道路生成的车辆行驶线路。");
     return;
   }
+
   const cached = ROAD_ROUTE_CACHE.get(routeId);
   if (cached) {
     map.getSource("road-routes").setData({
@@ -2433,7 +2430,7 @@ async function updateRoadRoutePreview(routeId) {
       features: [cached],
     });
     setStraightRouteVisibility(true);
-    setRoadRouteStatus("已显示导航道路线路（缓存）。", "ok");
+    setRoadRouteStatus("已显示本地道路估算线路（缓存，货车限制未核验）。", "ok");
     return;
   }
   const base = routeLineFeature(routeId);
@@ -2473,7 +2470,7 @@ async function updateRoadRoutePreview(routeId) {
       console.warn("Road route preview failed", err);
       emptyRoadRoute();
       setRoadRouteStatus(
-        "道路线路生成失败，已回退为原线路。请确认网络可访问 OSRM。",
+        "道路线路生成失败，已保留直线地理筛选线路（非实际道路）。请检查本地路网服务；如需公共 OSRM 需先显式授权。",
         "warn",
       );
     }
@@ -2501,8 +2498,8 @@ function updateMetrics() {
     ["已选路线", routes.length, "当前筛选路线数"],
   ];
   metrics.innerHTML = cells.map((c) =>
-    '<div class="metric"><div class="label">' + c[0] +
-    '</div><div class="value">' + c[1] + '</div><div class="sub">' + c[2] +
+    '<div class="metric"><div class="label">' + escapeHTML(c[0]) +
+    '</div><div class="value">' + escapeHTML(c[1]) + '</div><div class="sub">' + escapeHTML(c[2]) +
     "</div></div>"
   ).join("");
 }
@@ -2905,7 +2902,7 @@ function renderOverview() {
     co2.toFixed(1) +
     '</div><div class="muted">kg CO₂</div></div><div class="card span-8"><h3>全维度概览</h3><table class="table"><tbody><tr><td>总重量</td><td>' +
     fmt(weight) + "</td><td>总容量</td><td>" + fmt(volume) +
-    "</td></tr><tr><td>最晚回库</td><td>" + latest +
+    "</td></tr><tr><td>最晚回库</td><td>" + escapeHTML(latest) +
     "</td><td>缺坐标记录</td><td>" + missing +
     "</td></tr><tr><td>拆分装载</td><td>" + split +
     "</td><td>每件平均距离</td><td>" +
@@ -2924,13 +2921,13 @@ function renderOverview() {
     routes.filter((r) => utilNum(r.volumeUtil) < 40).length +
     '</b> 条</div></div><div class="card span-6"><h3>距离 Top 6</h3><table class="table"><thead><tr><th>路线</th><th>日期</th><th>车辆</th><th>距离</th><th>回库</th></tr></thead><tbody>' +
     topDistance.map((r) =>
-      "<tr><td>" + r.routeId + "</td><td>" + r.date + "</td><td>" +
-      r.vehicleId + "</td><td>" + r.km + " km</td><td>" + r.end + "</td></tr>"
+      "<tr><td>" + escapeHTML(r.routeId) + "</td><td>" + escapeHTML(r.date) + "</td><td>" +
+      escapeHTML(r.vehicleId) + "</td><td>" + escapeHTML(r.km) + " km</td><td>" + escapeHTML(r.end) + "</td></tr>"
     ).join("") +
     '</tbody></table></div><div class="card span-6"><h3>容积利用率 Top 6</h3><table class="table"><thead><tr><th>路线</th><th>日期</th><th>车辆</th><th>容积</th><th>件数</th></tr></thead><tbody>' +
     topUtil.map((r) =>
-      "<tr><td>" + r.routeId + "</td><td>" + r.date + "</td><td>" +
-      r.vehicleId + "</td><td>" + r.volumeUtil + "</td><td>" + fmt(r.packages) +
+      "<tr><td>" + escapeHTML(r.routeId) + "</td><td>" + escapeHTML(r.date) + "</td><td>" +
+      escapeHTML(r.vehicleId) + "</td><td>" + escapeHTML(r.volumeUtil) + "</td><td>" + fmt(r.packages) +
       "</td></tr>"
     ).join("") + "</tbody></table></div></div>";
 }
@@ -2990,14 +2987,14 @@ function renderAnalysis() {
     '%</div><div class="muted">装载效率</div></div><div class="card span-7"><h3>路线排行</h3>' +
     renderRank(routeRank(metric, "analysis"), metric) +
     '</div><div class="card span-5"><h3>智能洞察与建议</h3>' +
-    insights.map((x) => '<div class="insight">' + x + "</div>").join("") +
+    insights.map((x) => '<div class="insight">' + escapeHTML(x) + "</div>").join("") +
     '</div><div class="card span-4"><h3>重点路线</h3><div class="mini-note">最长路线：<b>' +
-    (longest?.routeId || "-") + "</b> " + (longest ? longest.km + " km" : "") +
-    '</div><div class="mini-note">停靠最多：<b>' + (dense?.routeId || "-") +
-    "</b> " + (dense ? dense.stops + " 批次" : "") +
-    '</div><div class="mini-note">容积最高：<b>' + (heavy?.routeId || "-") +
-    "</b> " + (heavy ? heavy.volumeUtil : "") +
-    '</div><div class="mini-note">最晚回库：<b>' + s.latest +
+    escapeHTML(longest?.routeId || "-") + "</b> " + escapeHTML(longest ? longest.km + " km" : "") +
+    '</div><div class="mini-note">停靠最多：<b>' + escapeHTML(dense?.routeId || "-") +
+    "</b> " + escapeHTML(dense ? dense.stops + " 批次" : "") +
+    '</div><div class="mini-note">容积最高：<b>' + escapeHTML(heavy?.routeId || "-") +
+    "</b> " + escapeHTML(heavy ? heavy.volumeUtil : "") +
+    '</div><div class="mini-note">最晚回库：<b>' + escapeHTML(s.latest) +
     '</b></div></div><div class="card span-8"><h3>车辆利用率分布</h3>' +
     renderUtilBuckets(s.routes) +
     '</div><div class="card span-12"><h3>改善方向</h3><table class="table"><thead><tr><th>问题类型</th><th>判断依据</th><th>建议动作</th></tr></thead><tbody><tr><td>低装载</td><td>容积利用率低于 40%</td><td>合并相邻区域或调整发车频次</td></tr><tr><td>长距离</td><td>单路线超过 80km</td><td>复核区域边界、顺序及中途补货可能性</td></tr><tr><td>高装载</td><td>容积利用率高于 90%</td><td>预留安全容量，避免临时订单超载</td></tr><tr><td>主数据风险</td><td>缺坐标或地址不完整</td><td>回流客户地址与订单主数据治理</td></tr></tbody></table></div></div>';
@@ -3043,9 +3040,9 @@ function renderCarbon() {
     trees.toFixed(1) +
     ' 棵</div><div class="muted">按 21.77 kg/棵/年估算</div></div><div class="card span-7"><h3>高排放路线 Top 10</h3><table class="table"><thead><tr><th>路线</th><th>车辆</th><th>距离</th><th>CO₂</th><th>容积</th></tr></thead><tbody>' +
     rows.map((r) =>
-      "<tr><td>" + r.routeId + "</td><td>" + r.vehicleId + "</td><td>" + r.km +
+      "<tr><td>" + escapeHTML(r.routeId) + "</td><td>" + escapeHTML(r.vehicleId) + "</td><td>" + escapeHTML(r.km) +
       " km</td><td>" + (r.km * factor).toFixed(1) + " kg</td><td>" +
-      r.volumeUtil + "</td></tr>"
+      escapeHTML(r.volumeUtil) + "</td></tr>"
     ).join("") +
     '</tbody></table></div><div class="card span-5"><h3>减排建议</h3><div class="mini-note"><span class="pill-good">优先</span> 合并低容积利用率且同方向路线，减少空驶。</div><div class="mini-note"><span class="pill-good">优先</span> 对超过 80km 的路线复核地理顺序和缺坐标点。</div><div class="mini-note"><span class="pill-warn">注意</span> 当前 CO₂ 基于估算行驶距离，不是路网导航距离。</div></div></div>';
 }
@@ -3419,20 +3416,31 @@ function excelToRawData(workbook) {
   if (!orderSheet || !vehicleSheet) {
     throw new Error("Raw Data Excel 需要包含 Orders 和 Vehicles 工作表");
   }
-  const orders = sheetRowsToObjects(
-    XLSX.utils.sheet_to_json(orderSheet, { header: 1, defval: "" }),
-  ).map((r, i) => {
-    const rawLat = excelToNumber(
+  const importAssumptions = [];
+  // Missingness and the source cell must survive preview; never normalize bad input into a fact.
+  const rawNumber = value => value == null || (typeof value === 'string' && value.trim() === '') ? null : typeof value !== 'boolean' && Number.isFinite(Number(value)) ? Number(value) : value;
+  const rawRows = sheet => {
+    const name = workbook.SheetNames.find(name => workbook.Sheets[name] === sheet);
+    const rows = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true }) : [];
+    const headers = (rows[0] || []).map(value => String(value ?? '').trim());
+    return rows.slice(1).map((values, i) => ({ ...Object.fromEntries(headers.map((key, j) => [key, values[j] ?? ''])), _source: { sheet: name || '', rowNumber: i + 2, values } })).filter(row => row._source.values.some(value => value !== '' && value != null));
+  };
+  const assumed = (value, fallback, row, field) => {
+    if (value !== '' && value != null) return value;
+    importAssumptions.push({ ...row._source, field, value: fallback, reason: 'MISSING_INPUT_DEFAULT' });
+    return fallback;
+  };
+  const orders = rawRows(orderSheet).map((r, i) => {
+    const rawLat = rawNumber(
       firstValue(r, ["纬度", "配送点纬度", "lat", "Latitude"]),
-      NaN,
     );
-    const rawLon = excelToNumber(
+    const rawLon = rawNumber(
       firstValue(r, ["经度", "配送点经度", "lon", "lng", "Longitude"]),
-      NaN,
     );
     const fixedCoord = normalizeLonLat(rawLon, rawLat);
     const lat = fixedCoord.lat, lon = fixedCoord.lon;
     return {
+      source: r._source,
       id: String(
         firstValue(r, ["订单号", "订单ID", "Order ID", "orderId"]) ||
           ("RAW-" + String(i + 1).padStart(4, "0")),
@@ -3453,49 +3461,31 @@ function excelToRawData(workbook) {
       ),
       lat,
       lon,
-      count: excelToNumber(
-        firstValue(r, ["件数", "核对件数", "Packages", "count"]),
-        1,
-      ),
-      weight: Math.max(
-        0,
-        excelToNumber(firstValue(r, ["重量", "Weight", "weight"]), 0),
-      ),
-      volume: Math.max(
-        1,
-        excelToNumber(firstValue(r, ["体积", "容积", "Volume", "volume"]), 1),
-      ),
-      serviceMin: Math.max(
-        1,
-        excelToNumber(
-          firstValue(r, ["服务时间", "停留分钟", "Service Min", "serviceMin"]),
-          1,
-        ),
-      ),
-      twStart: String(
+      count: rawNumber(assumed(firstValue(r, ["件数", "核对件数", "Packages", "count"]), 1, r, 'count')),
+      weight: rawNumber(firstValue(r, ["重量", "Weight", "weight"])),
+      volume: rawNumber(firstValue(r, ["体积", "容积", "Volume", "volume"])),
+      serviceMin: rawNumber(assumed(firstValue(r, ["服务时间", "停留分钟", "Service Min", "serviceMin"]), 1, r, 'serviceMin')),
+      twStart: String(assumed(
         firstValue(r, [
           "时间窗开始",
           "可配送开始",
           "TW Start",
           "timeWindowStart",
-        ]) || "09:00",
-      ),
-      twEnd: String(
+        ]), "09:00", r, 'twStart')),
+      twEnd: String(assumed(
         firstValue(r, [
           "时间窗结束",
           "可配送结束",
           "TW End",
           "timeWindowEnd",
-        ]) || "17:30",
-      ),
+        ]), "17:30", r, 'twEnd')),
       priority: String(
         firstValue(r, ["优先级", "Priority", "priority"]) || "normal",
       ),
     };
-  }).filter((o) => o.date && Number.isFinite(o.lat) && Number.isFinite(o.lon));
-  const vehicles = sheetRowsToObjects(
-    XLSX.utils.sheet_to_json(vehicleSheet, { header: 1, defval: "" }),
-  ).map((r, i) => ({
+  });
+  const vehicles = rawRows(vehicleSheet).map((r, i) => ({
+    source: r._source,
     vehicleId: String(
       firstValue(r, ["车辆ID", "Vehicle ID", "vehicleId"]) ||
         ("V" + String(i + 1).padStart(2, "0")),
@@ -3505,54 +3495,23 @@ function excelToRawData(workbook) {
         "配送车辆",
     ),
     type: String(firstValue(r, ["车型", "Type", "type"]) || ""),
-    maxWeight: Math.max(
-      0,
-      excelToNumber(
-        firstValue(r, ["最大载重", "载重上限", "Max Weight", "maxWeight"]),
-        0,
-      ),
-    ),
-    maxVolume: Math.max(
-      1,
-      excelToNumber(
-        firstValue(r, ["最大容积", "容积上限", "Max Volume", "maxVolume"]),
-        500,
-      ),
-    ),
-    start: String(
-      firstValue(r, ["可用开始", "Available Start", "start"]) || "09:00",
-    ),
-    end: String(firstValue(r, ["可用结束", "Available End", "end"]) || "17:30"),
+    maxWeight: rawNumber(firstValue(r, ["最大载重", "载重上限", "Max Weight", "maxWeight"])),
+    maxVolume: rawNumber(firstValue(r, ["最大容积", "容积上限", "Max Volume", "maxVolume"])),
+    start: String(assumed(firstValue(r, ["可用开始", "Available Start", "start"]), "09:00", r, 'start')),
+    end: String(assumed(firstValue(r, ["可用结束", "Available End", "end"]), "17:30", r, 'end')),
     availableDate: excelSerialToDate(
       firstValue(r, ["可用日期", "配送日", "Date", "date"]) || "",
     ),
   })).filter((v) => v.vehicleId);
-  const depotRows = depotSheet
-    ? sheetRowsToObjects(
-      XLSX.utils.sheet_to_json(depotSheet, { header: 1, defval: "" }),
-    )
-    : [];
+  const depotRows = rawRows(depotSheet);
   const d = depotRows[0] || {};
   const depot = {
-    code: String(
-      firstValue(d, ["仓库ID", "Depot ID", "code"]) || DATA.depot.code ||
-        "DEPOT",
-    ),
-    name: String(
-      firstValue(d, ["仓库名称", "Depot Name", "name"]) || DATA.depot.name ||
-        "Depot",
-    ),
-    addr: String(
-      firstValue(d, ["地址", "Address", "addr"]) || DATA.depot.addr || "",
-    ),
-    lat: excelToNumber(
-      firstValue(d, ["纬度", "lat", "Latitude"]),
-      DATA.depot.lat,
-    ),
-    lon: excelToNumber(
-      firstValue(d, ["经度", "lon", "lng", "Longitude"]),
-      DATA.depot.lon,
-    ),
+    source: d._source || { sheet: 'Depots', rowNumber: 2, values: [] },
+    code: String(firstValue(d, ["仓库ID", "Depot ID", "code"])) ,
+    name: String(firstValue(d, ["仓库名称", "Depot Name", "name"])),
+    addr: String(firstValue(d, ["地址", "Address", "addr"])),
+    lat: rawNumber(firstValue(d, ["纬度", "lat", "Latitude"])),
+    lon: rawNumber(firstValue(d, ["经度", "lon", "lng", "Longitude"])),
     kind: "from",
   };
   const constraintRows = constraintSheet
@@ -3560,32 +3519,27 @@ function excelToRawData(workbook) {
       XLSX.utils.sheet_to_json(constraintSheet, { header: 1, defval: "" }),
     )
     : [];
-  const constraints = {
-    lunchStart: "12:00",
-    lunchEnd: "13:00",
-    averageSpeedKmh: 28,
-    allowSplit: false,
-  };
+  const constraints = { lunchStart: "12:00", lunchEnd: "13:00", averageSpeedKmh: 28, allowSplit: false };
+  const supplied = new Set();
   constraintRows.forEach((r) => {
     const key = String(firstValue(r, ["项目", "Key", "key"]) || "");
     const val = firstValue(r, ["值", "Value", "value"]);
+    if (val == null || String(val).trim() === "") return;
     if (key.includes("午休开始") || key === "lunchStart") {
-      constraints.lunchStart = String(val || constraints.lunchStart);
+      constraints.lunchStart = String(val); supplied.add('lunchStart');
     }
     if (key.includes("午休结束") || key === "lunchEnd") {
-      constraints.lunchEnd = String(val || constraints.lunchEnd);
+      constraints.lunchEnd = String(val); supplied.add('lunchEnd');
     }
     if (key.includes("平均速度") || key === "averageSpeedKmh") {
-      constraints.averageSpeedKmh = excelToNumber(
-        val,
-        constraints.averageSpeedKmh,
-      );
+      constraints.averageSpeedKmh = rawNumber(val); supplied.add('averageSpeedKmh');
     }
     if (key.includes("允许拆单") || key === "allowSplit") {
       constraints.allowSplit = String(val).toLowerCase() === "true" ||
         String(val) === "是";
     }
   });
+  for (const field of ['lunchStart', 'lunchEnd', 'averageSpeedKmh']) if (!supplied.has(field)) importAssumptions.push({ sheet: 'Constraints', rowNumber: null, field, value: constraints[field], reason: 'MISSING_INPUT_DEFAULT' });
   if (!orders.length) {
     throw new Error(
       "Raw Data 中没有可用订单，请确认 Orders 表包含配送日、经纬度、件数、重量、体积",
@@ -3602,6 +3556,8 @@ function excelToRawData(workbook) {
     vehicles,
     depot,
     constraints,
+    importAssumptions,
+    importAssumptionsConfirmed: false,
     uploadedAt: new Date().toLocaleString(),
   };
 }
@@ -3636,8 +3592,11 @@ async function parseExcelFile(file) {
   if (!window.XLSX) {
     throw new Error("Excel 解析库尚未加载，请检查 vendor/xlsx/xlsx.full.min.js 本地资源");
   }
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array", cellDates: false });
+  window.STCTImportBudget.checkFileSize(file);
+  const buf = new Uint8Array(await file.arrayBuffer());
+  if (buf[0] === 0x50 && buf[1] === 0x4b) window.STCTImportBudget.zipPreflight(buf);
+  const wb = XLSX.read(buf, { type: "array", cellDates: false, cellHTML: false, bookVBA: false, sheetRows: window.STCTImportBudget.LIMITS.rows + 1 });
+  window.STCTImportBudget.checkWorkbook(wb, XLSX);
   if (hasRawWorkbook(wb)) return { __rawUpload: true, raw: excelToRawData(wb) };
   return excelToFlowData(wb);
 }
@@ -3660,11 +3619,14 @@ function validateFlowData(data) {
   return true;
 }
 function parseUploadedText(text) {
+  window.STCTImportBudget.checkJsonBudget(text);
   let t = text.trim();
   if (t.startsWith("window.FLOWMAP_DATA")) {
     t = t.replace(/^window\.FLOWMAP_DATA\s*=\s*/, "").replace(/;\s*$/, "");
   }
-  return JSON.parse(t);
+  const parsed = window.STCTImportBudget.checkValue(JSON.parse(t));
+  for (const rows of [parsed.routes, parsed.daySummaries, parsed.orders, parsed.raw?.orders, parsed.raw?.vehicles]) if (Array.isArray(rows) && rows.length > window.STCTImportBudget.LIMITS.rows) throw new Error("IMPORT_ROW_LIMIT");
+  return parsed;
 }
 function applyUploadedData(data) {
   data = (window.STCTValidator && window.STCTValidator.sanitizeUploadData)
@@ -3672,6 +3634,7 @@ function applyUploadedData(data) {
     : data;
   validateFlowData(data);
   DATA = data;
+  transportDataApplied = true;
   window.DATA = DATA;
   dataStatus = "已应用";
   dataSource = (data && data.meta && data.meta.source) || dataSource;
@@ -3862,7 +3825,7 @@ function renderUpload() {
   }
   document.getElementById("chooseUpload").onclick = () => file.click();
   function csvEscape(v) {
-    return '"' + String(v ?? "").replace(/"/g, '""') + '"';
+    return window.STCTUtils.csvSafe(v);
   }
   function downloadText(name, text, type = "text/csv") {
     const blob = new Blob([text], { type });
@@ -3879,6 +3842,7 @@ function renderUpload() {
   }
   async function handleFile(f) {
     try {
+      window.STCTImportBudget.checkFileSize(f);
       const isExcel = /\.(xlsx|xls)$/i.test(f.name);
       const data = isExcel
         ? await parseExcelFile(f)
@@ -3889,7 +3853,7 @@ function renderUpload() {
       if (typeof applyLanguage === "function") applyLanguage(currentLang);
     } catch (err) {
       status.innerHTML =
-        '<b style="color:#b91c1c"><span>上传失败：</span></b>' + err.message;
+        '<b style="color:#b91c1c"><span>上传失败：</span></b>' + escapeHTML(err.message);
       if (typeof applyLanguage === "function") applyLanguage(currentLang);
     }
   }
@@ -4706,6 +4670,12 @@ function toggleRouteFilter() {
   }
 }
 function switchView(id) {
+  const platform = window.STCTPlatformV19;
+  const destination = platform?.legacyRoutes?.getById(id)?.targetLogicalPath;
+  if (window.STCT_V8_PLATFORM_ENTRY && platform?.instance && destination) {
+    platform.instance.navigate(destination);
+    return;
+  }
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === id)
   );
@@ -4831,10 +4801,11 @@ const hasMapLibre = Boolean(
 );
 let mapInitError = null;
 if (hasMapLibre) {
+  state.mapTheme = window.STCTPlatformV19?.theme?.basemap(APP_CONFIG) === MAP_STYLES.dark ? "dark" : state.mapTheme;
   try {
     map = new maplibregl.Map({
       container: "map",
-      style: APP_CONFIG.mapStyleUrl || MAP_STYLES.liberty,
+      style: window.STCTPlatformV19?.theme?.basemap(APP_CONFIG) || APP_CONFIG.mapStyleUrl || MAP_STYLES.liberty,
       center: [DATA.depot.lon, DATA.depot.lat],
       zoom: 11,
       attributionControl: true,
@@ -5358,7 +5329,7 @@ document.getElementById("splitToggle").addEventListener(
 );
 document.getElementById("mapThemeSelect")?.addEventListener(
   "change",
-  (e) => changeMapTheme(e.target.value),
+  (e) => {legacyMapThemeOverride=true;changeMapTheme(e.target.value);},
 );
 document.getElementById("mapPresetSelect")?.addEventListener(
   "change",
@@ -5445,6 +5416,7 @@ window.STCTCore = {
   getData: () => DATA,
   getRawData: () => RAW_DATA,
   getOriginalData: () => ORIGINAL_DATA,
+  getTransportDataState: () => ({ applied: transportDataApplied, rawReady: !!RAW_DATA, source: dataSource }),
   getLanguage: () => currentLang,
   getOptimizerPlan: () => optimizerPlan,
   getMap: () => map,

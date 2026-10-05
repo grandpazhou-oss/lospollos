@@ -170,7 +170,7 @@ async function main() {
   x(58, JSON.stringify(designModel.platformGroup.items.map((item) => item.path)) === JSON.stringify(platformPaths), platformPaths, "same order");
   x(59, JSON.stringify(designModel.platformGroup.items.map((item) => item.icon)) === JSON.stringify(commandModel.platformGroup.items.map((item) => item.icon)), designModel.platformGroup.items.map((item) => item.icon), "same icons");
   x(60, I18n.locales.every((locale) => Model.PLATFORM_ITEMS.every((item) => I18n.translate(item.labelKey, locale) !== item.labelKey)), I18n.locales, "same localized labels");
-  x(61, css.includes(".platform-v19-shared-nav") && css.includes("border-top: 1px solid #b8c5d4"), "separate border and surface", "visually separated");
+  x(61, css.includes(".platform-v19-shared-nav") && css.includes("border-top: 1px solid var(--ui-line, #b8c5d4)"), "separate border and surface", "visually separated");
   x(62, css.includes(".platform-mobile-shared-nav") && css.includes("max-height: 228px"), "short-screen independently scrollable shared nav", "reachable");
   x(63, Object.keys(Model.WORKSPACE_IDENTITIES).length === 2 && !Object.hasOwn(Model.WORKSPACE_IDENTITIES, "PLATFORM"), Object.keys(Model.WORKSPACE_IDENTITIES), "PLATFORM is shared context");
   const platformMemory = authorityAt("DESIGN", "/design/network-scenarios");

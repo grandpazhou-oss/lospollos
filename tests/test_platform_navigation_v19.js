@@ -91,7 +91,7 @@ async function main() {
   ].forEach(([id, route]) => check(id, !commandPaths.some((pathValue) => pathValue.includes(route)), commandPaths, `excludes ${route}`, true));
 
   check("T0149", JSON.stringify(design.platformGroup.items) === JSON.stringify(command.platformGroup.items), platformPaths, "identical PLATFORM items");
-  check("T0150", css.includes(".platform-v19-shared-nav") && css.includes("border-top: 1px solid #b8c5d4"), "separate shared region and rule", "visually separated");
+  check("T0150", css.includes(".platform-v19-shared-nav") && css.includes("border-top: 1px solid var(--ui-line, #b8c5d4)"), "separate shared region and rule", "visually separated");
   check("T0151", designPaths.every((route) => route.startsWith("/design/")) && !designPaths.some((route) => route.startsWith("/command/")), designPaths, "DESIGN only");
   check("T0152", commandPaths.every((route) => route.startsWith("/command/")) && !commandPaths.some((route) => route.startsWith("/design/")), commandPaths, "COMMAND only");
   check("T0153", new Set([...designPaths, ...commandPaths]).size === designPaths.length + commandPaths.length, { design: designPaths.length, command: commandPaths.length }, "separate domains");

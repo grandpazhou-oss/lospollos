@@ -23,6 +23,13 @@ RESULT_SCHEMAS = {"JOINT": "stct-supply-chain-joint-result-v1", "FACILITY": "stc
 MAX_EVENT_CHARS = 32_000_000
 
 
+def worker_process_options(platform=None):
+    """Keep worker isolation supported by the host operating system."""
+    if (platform or sys.platform) == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
+    return {"start_new_session": True}
+
+
 class JobError(Exception):
     def __init__(self, code: str, status: int = 400):
         self.code = code
@@ -213,7 +220,7 @@ class JobManager:
             with self.lock:
                 if job["cancelRequested"]:
                     return
-                process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("supply_chain_job_worker_v6.py"))], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1, cwd=Path(__file__).parent, start_new_session=True)
+                process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("supply_chain_job_worker_v6.py"))], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1, cwd=Path(__file__).parent, **worker_process_options())
                 job["process"] = process
                 job["pid"] = process.pid
                 job["startedAt"] = time.time()

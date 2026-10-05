@@ -1,38 +1,18 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""Build the dispatch dashboard HTML from template + embedded libraries.
+"""Rebuild the retained legacy view using existing local libraries, on Mac or Windows."""
+from pathlib import Path
+import re
 
-   The route data is NOT embedded — it's loaded at runtime from backend/route_data.js.
-   This means: update data → just regenerate route_data.js → refresh browser.
-"""
-
-import os
-
-ROOT = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE = os.path.join(ROOT, 'dashboard_template.html')
-OUTPUT = os.path.join(ROOT, '..', 'dispatch.html')
-
-# Read libraries (embedded in HTML for offline use)
-with open('/tmp/maplibre.css', 'r') as f: ml_css = f.read()
-with open('/tmp/maplibre.js', 'r') as f: ml_js = f.read()
-with open('/tmp/chart.js', 'r') as f: chart_js = f.read()
-with open('/tmp/sheetjs.js', 'r') as f: sheetjs = f.read()
-
-# Read template and replace placeholders
-with open(TEMPLATE, 'r', encoding='utf-8') as f:
-    html = f.read()
-
-html = html.replace('{{ML_CSS}}', ml_css)
-html = html.replace('{{ML_JS}}', ml_js)
-html = html.replace('{{CHART_JS}}', chart_js)
-html = html.replace('{{SHEETJS}}', sheetjs)
-
-with open(OUTPUT, 'w', encoding='utf-8') as f:
-    f.write(html)
-
-size = os.path.getsize(OUTPUT)
-print(f"dispatch.html: {size:,} bytes ({size/1024:.0f} KB)")
-print(f"  MapLibre GL JS + Chart.js embedded")
-print(f"  Route data loaded from: backend/route_data.js")
-print(f"  Carbon data computed in-browser")
-print(f"Done!")
+ROOT = Path(__file__).resolve().parent
+APP = ROOT.parent
+OUTPUT = APP / "dispatch.html"
+# Chart.js is already embedded in the preserved legacy page; no install or network fetch.
+chart = next((block for block in re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", OUTPUT.read_text(encoding="utf-8"), re.S) if "/npm/chart.js@" in block[:300]), None)
+if chart is None:
+    raise RuntimeError("Existing embedded Chart.js is missing; retain dispatch.html before rebuilding")
+libraries = {"ML_CSS": (APP / "vendor/maplibre/maplibre-gl.css").read_text(encoding="utf-8"), "ML_JS": (APP / "vendor/maplibre/maplibre-gl.js").read_text(encoding="utf-8"), "SHEETJS": (APP / "vendor/xlsx/xlsx.full.min.js").read_text(encoding="utf-8"), "CHART_JS": chart}
+html = (ROOT / "dashboard_template.html").read_text(encoding="utf-8")
+for key, value in libraries.items():
+    html = html.replace("{{" + key + "}}", value)
+OUTPUT.write_text(html, encoding="utf-8")
+print("Retained legacy dashboard rebuilt from local libraries:", OUTPUT.name, OUTPUT.stat().st_size)

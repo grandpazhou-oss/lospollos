@@ -25,11 +25,14 @@ const study = Design.createStudy({ studyId: 'FORM-SYNC', classification: 'SYNTHE
   view.onInput({ target: { dataset: { supplyField: 'minSites' }, value: '3' } });
   assert.deepEqual(controller.snapshot().scenario.facilityCounts, [3]);
   assert.deepEqual(controller.snapshot().scenario.requiredSiteIds, ['SITE-A']);
-  const matrixCsv = Buffer.from('from,to,distanceKm,quality,source,unit\nAlpha Site,C,10,VERIFIED_ROAD,SYNTHETIC_TEST,km\nBeta Site,C,5,VERIFIED_ROAD,SYNTHETIC_TEST,km\n');
+  const matrixCsv = Buffer.from('from,to,distanceKm,quality,source,unit,observedAt,strategy\nAlpha Site,C,10,VERIFIED_ROAD,SYNTHETIC_TEST,km,2026-09-29T00:00:00Z,car.lua / MLD synthetic test\nBeta Site,C,5,VERIFIED_ROAD,SYNTHETIC_TEST,km\n');
   await view.onChange({ target: { dataset: { supplyFile: 'matrix' }, files: [{ name: 'roads.csv', arrayBuffer: async () => matrixCsv }] } });
   await view.action('matrix-confirm');
   assert.equal(controller.snapshot().study.distanceRows.length, 2);
   assert.equal(controller.snapshot().study.distanceRows[0].fromNodeId, 'SITE-A');
+  assert.equal(controller.snapshot().study.distanceRows[0].observedAt, '2026-09-29T00:00:00Z');
+  assert.equal(controller.snapshot().study.distanceRows[0].strategy, 'car.lua / MLD synthetic test');
+  assert.equal(controller.snapshot().study.distanceRows[1].observedAt, null);
   view.onInput({ target: { dataset: { supplyRate: 'OUTBOUND_TRANSPORT', rateKey: 'amount' }, value: '1.5' } });
   view.onInput({ target: { dataset: { supplyRate: 'OUTBOUND_TRANSPORT', rateKey: 'status' }, value: 'ASSUMED' } });
   assert.equal(controller.snapshot().study.rates.find(row => row.kind === 'OUTBOUND_TRANSPORT').amount, 1.5);

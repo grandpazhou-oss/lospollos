@@ -1,13 +1,13 @@
 :root {
-  --p2-ink: #14233a;
-  --p2-muted: #5f6f82;
-  --p2-line: #d7dee8;
-  --p2-canvas: #f4f6f8;
+  --p2-ink: var(--ui-ink, #14233a);
+  --p2-muted: var(--ui-muted, #5f6f82);
+  --p2-line: var(--ui-line, #d7dee8);
+  --p2-canvas: var(--ui-surface-soft, #f4f6f8);
   --p2-surface: #ffffff;
   --p2-design: #5b5bd6;
-  --p2-design-soft: #eeeeff;
+  --p2-design-soft: var(--ui-surface-soft, #eeeeff);
   --p2-command: #087ea4;
-  --p2-command-soft: #e8f7fb;
+  --p2-command-soft: var(--ui-accent-soft, #e8f7fb);
   --p2-critical: #d71920;
   --p2-warning: #b66a00;
   --p2-success: #16794a;
@@ -31,15 +31,15 @@
   display: grid;
   place-items: center;
   margin-bottom: 14px;
-  border: 2px solid #087ea4;
-  background: #fff;
-  color: #064f68;
+  border: 2px solid var(--ui-accent, #087ea4);
+  background: var(--ui-surface, #fff);
+  color: var(--ui-ink, #064f68);
   font-size: 16px;
   font-weight: 900;
 }
 
 .platform-pre-shell-name {
-  color: #064f68;
+  color: var(--ui-ink, #064f68);
   font-size: 14px;
   font-weight: 850;
   line-height: 1.2;
@@ -169,9 +169,9 @@ html body .app.platform-shell-active > main {
   place-items: center;
   width: 38px;
   height: 38px;
-  border: 1px solid #aeb9c7;
+  border: 1px solid var(--ui-line, #aeb9c7);
   border-radius: 6px;
-  color: #123c72;
+  color: var(--ui-accent, #123c72);
   font-size: 11px;
   font-weight: 900;
 }
@@ -184,7 +184,7 @@ html body .app.platform-shell-active > main {
 
 .platform-display-copy strong {
   overflow: hidden;
-  color: #0d2f59;
+  color: var(--ui-ink, #0d2f59);
   font-size: 13px;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -206,7 +206,7 @@ html body .app.platform-shell-active > main {
 .platform-nav-section-label,
 .platform-nav-group-heading {
   margin: 0;
-  color: #6b7788;
+  color: var(--ui-muted, #6b7788);
   font-size: 10px;
   font-weight: 900;
   line-height: 1.2;
@@ -230,15 +230,15 @@ html body .app.platform-shell-active > main {
   padding: 7px 9px;
   border: 1px solid transparent;
   border-radius: 6px;
-  background: #fff;
+  background: var(--ui-surface, #fff);
   color: var(--p2-ink);
   text-align: left;
   cursor: pointer;
 }
 
 .platform-workspace-option:hover {
-  border-color: #b9c4d1;
-  background: #f7f9fb;
+  border-color: var(--ui-line, #b9c4d1);
+  background: var(--ui-surface, #f7f9fb);
 }
 
 .platform-workspace-option[aria-pressed="true"] {
@@ -247,11 +247,11 @@ html body .app.platform-shell-active > main {
 }
 
 .platform-workspace-design {
-  color: #4e4ebc;
+  color: var(--ui-accent, #4e4ebc);
 }
 
 .platform-workspace-command {
-  color: #076f90;
+  color: var(--ui-accent, #076f90);
 }
 
 .platform-workspace-design[aria-pressed="true"] {
@@ -338,7 +338,7 @@ html body .app.platform-shell-active > main {
   border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
-  color: #34445a;
+  color: var(--ui-accent, #34445a);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -346,26 +346,26 @@ html body .app.platform-shell-active > main {
 }
 
 .platform-nav-item:hover {
-  border-color: #d7dee8;
-  background: #f6f8fa;
+  border-color: var(--ui-line, #d7dee8);
+  background: var(--ui-surface-soft, #f6f8fa);
 }
 
 .platform-nav-item.active {
-  border-color: #b8c6d5;
-  background: #eef3f7;
-  color: #102d51;
+  border-color: var(--ui-line, #b8c6d5);
+  background: var(--ui-accent-soft, #eef3f7);
+  color: var(--ui-ink, #102d51);
   font-weight: 850;
 }
 
 .platform-v19-shell[data-business-workspace="DESIGN"] .platform-v19-business-nav .platform-nav-item.active,
 .platform-v19-shell[data-business-workspace="DESIGN"] .platform-mobile-business-nav .platform-nav-item.active {
-  border-color: #c5c5ef;
+  border-color: var(--ui-line, #c5c5ef);
   background: var(--p2-design-soft);
 }
 
 .platform-v19-shell[data-business-workspace="COMMAND"] .platform-v19-business-nav .platform-nav-item.active,
 .platform-v19-shell[data-business-workspace="COMMAND"] .platform-mobile-business-nav .platform-nav-item.active {
-  border-color: #b7dde8;
+  border-color: var(--ui-line, #b7dde8);
   background: var(--p2-command-soft);
 }
 
@@ -394,9 +394,9 @@ html body .app.platform-shell-active > main {
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid #c7d0dc;
+  border: 1px solid var(--ui-line, #c7d0dc);
   border-radius: 5px;
-  color: #304e70;
+  color: var(--ui-accent, #304e70);
   font-size: 13px;
   font-weight: 900;
 }
@@ -408,7 +408,7 @@ html body .app.platform-shell-active > main {
 }
 
 .platform-nav-current {
-  color: #52647a;
+  color: var(--ui-muted, #52647a);
   font-size: 9px;
   font-weight: 850;
 }
@@ -416,8 +416,8 @@ html body .app.platform-shell-active > main {
 .platform-v19-shared-nav,
 .platform-mobile-shared-nav {
   padding: 12px 10px;
-  border-top: 1px solid #b8c5d4;
-  background: #fbfcfd;
+  border-top: 1px solid var(--ui-line, #b8c5d4);
+  background: var(--ui-surface, #fbfcfd);
 }
 
 .platform-v19-shared-nav .platform-nav-group {
@@ -431,7 +431,7 @@ html body .app.platform-shell-active > main {
   gap: 8px;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--p2-line);
-  background: #fff;
+  background: var(--ui-surface, #fff);
 }
 
 .platform-locale-control {
@@ -448,9 +448,9 @@ html body .app.platform-shell-active > main {
   height: 34px;
   min-width: 0;
   padding: 0 8px;
-  border: 1px solid #b8c5d4;
+  border: 1px solid var(--ui-line, #b8c5d4);
   border-radius: 5px;
-  background: #fff;
+  background: var(--ui-surface, #fff);
   color: var(--p2-ink);
   font: inherit;
   font-size: 11px;
@@ -463,10 +463,10 @@ html body .app.platform-shell-active > main {
   place-items: center;
   width: 40px;
   height: 40px;
-  border: 1px solid #b8c5d4;
+  border: 1px solid var(--ui-line, #b8c5d4);
   border-radius: 6px;
-  background: #fff;
-  color: #173c68;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-accent, #173c68);
   font-size: 18px;
   cursor: pointer;
 }
@@ -538,8 +538,8 @@ html body .app.platform-shell-active > main {
   padding: 0 28px;
   overflow: hidden;
   border-bottom: 1px solid var(--p2-line);
-  background: #fff;
-  color: #52647a;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-muted, #52647a);
   font-size: 11px;
   font-weight: 750;
   text-overflow: ellipsis;
@@ -584,14 +584,14 @@ html body .app.platform-shell-active > main {
 
 .platform-home-kicker {
   margin: 0 0 12px;
-  color: #35516f;
+  color: var(--ui-accent, #35516f);
   font-size: 12px;
   font-weight: 850;
 }
 
 .platform-home-question {
   margin: 0;
-  color: #0d2f59;
+  color: var(--ui-ink, #0d2f59);
   font-size: 36px;
   line-height: 1.15;
   letter-spacing: 0;
@@ -617,9 +617,9 @@ html body .app.platform-shell-active > main {
   grid-template-rows: auto auto auto 1fr;
   min-height: 260px;
   padding: 24px;
-  border: 1px solid #bcc8d6;
+  border: 1px solid var(--ui-line, #bcc8d6);
   border-radius: 8px;
-  background: #fff;
+  background: var(--ui-surface, #fff);
   color: var(--p2-ink);
   font: inherit;
   text-align: left;
@@ -642,7 +642,7 @@ html body .app.platform-shell-active > main {
 }
 
 .platform-home-card:hover {
-  border-color: #778ca3;
+  border-color: var(--ui-line-strong, #778ca3);
   box-shadow: 0 10px 28px rgba(25, 48, 76, 0.09);
 }
 
@@ -675,7 +675,7 @@ html body .app.platform-shell-active > main {
 }
 
 .platform-home-card-title strong {
-  color: #102d51;
+  color: var(--ui-ink, #102d51);
   font-size: 20px;
 }
 
@@ -687,14 +687,14 @@ html body .app.platform-shell-active > main {
 
 .platform-home-card-summary {
   margin-top: 24px;
-  color: #30445c;
+  color: var(--ui-accent, #30445c);
   font-size: 13px;
   line-height: 1.55;
 }
 
 .platform-home-card-capabilities {
   margin-top: 12px;
-  color: #5c6f84;
+  color: var(--ui-muted, #5c6f84);
   font-size: 11px;
   font-weight: 750;
   line-height: 1.5;
@@ -708,7 +708,7 @@ html body .app.platform-shell-active > main {
   margin-top: 24px;
   padding-top: 14px;
   border-top: 1px solid var(--p2-line);
-  color: #344f73;
+  color: var(--ui-accent, #344f73);
   font-size: 12px;
   font-weight: 850;
 }
@@ -721,11 +721,11 @@ html body .app.platform-shell-active > main {
   gap: 8px 18px;
   margin-top: 28px;
   padding-top: 20px;
-  border-top: 1px solid #b9c5d2;
+  border-top: 1px solid var(--ui-line, #b9c5d2);
 }
 
 .platform-home-shared-label {
-  color: #40556f;
+  color: var(--ui-accent, #40556f);
   font-size: 10px;
   font-weight: 900;
 }
@@ -736,7 +736,7 @@ html body .app.platform-shell-active > main {
   border: 0;
   border-bottom: 1px solid transparent;
   background: transparent;
-  color: #214d78;
+  color: var(--ui-accent, #214d78);
   font: inherit;
   font-size: 12px;
   font-weight: 800;
@@ -753,7 +753,7 @@ html body .app.platform-shell-active > main {
 }
 
 .platform-route-content .platform-route-eyebrow {
-  color: #53667d;
+  color: var(--ui-muted, #53667d);
 }
 
 .platform-route-heading {
@@ -763,18 +763,18 @@ html body .app.platform-shell-active > main {
 .platform-settings-scope-preview {
   margin-top: 30px;
   padding-top: 20px;
-  border-top: 1px solid #aebdcd;
+  border-top: 1px solid var(--ui-line, #aebdcd);
 }
 
 .platform-settings-scope-preview h2 {
   margin: 0 0 12px;
-  color: #173c68;
+  color: var(--ui-accent, #173c68);
   font-size: 16px;
 }
 
 .platform-settings-scope-preview p {
   margin: 7px 0;
-  color: #324a65;
+  color: var(--ui-accent, #324a65);
   font-size: 12px;
 }
 
@@ -830,7 +830,7 @@ html body .app.platform-shell-active > main {
     min-height: calc(64px + env(safe-area-inset-top));
     padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left));
     border-bottom: 1px solid var(--p2-line);
-    background: #fff;
+    background: var(--ui-surface, #fff);
   }
 
   .platform-mobile-brand {
@@ -841,14 +841,14 @@ html body .app.platform-shell-active > main {
 
   .platform-mobile-brand strong {
     overflow: hidden;
-    color: #0d2f59;
+    color: var(--ui-ink, #0d2f59);
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .platform-mobile-brand span {
-    color: #52647a;
+    color: var(--ui-muted, #52647a);
     font-size: 9px;
     font-weight: 900;
   }
@@ -856,7 +856,7 @@ html body .app.platform-shell-active > main {
   .platform-mobile-page {
     max-width: 180px;
     overflow: hidden;
-    color: #344a62;
+    color: var(--ui-accent, #344a62);
     font-size: 11px;
     font-weight: 800;
     text-overflow: ellipsis;
@@ -953,8 +953,8 @@ html body .app.platform-shell-active > main {
     height: 100dvh;
     padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
     overflow: hidden;
-    border-right: 1px solid #aebdcd;
-    background: #fff;
+    border-right: 1px solid var(--ui-line, #aebdcd);
+    background: var(--ui-surface, #fff);
     box-shadow: 12px 0 30px rgba(15, 35, 60, 0.2);
   }
 
@@ -976,14 +976,14 @@ html body .app.platform-shell-active > main {
 
   .platform-drawer-title strong {
     overflow: hidden;
-    color: #0d2f59;
+    color: var(--ui-ink, #0d2f59);
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .platform-drawer-title span {
-    color: #53667d;
+    color: var(--ui-muted, #53667d);
     font-size: 10px;
     font-weight: 900;
   }
@@ -1095,7 +1095,7 @@ html body .app.platform-shell-active > main {
     max-height: none;
     overflow: auto;
     border-top: 0;
-    border-left: 1px solid #b8c5d4;
+    border-left: 1px solid var(--ui-line, #b8c5d4);
   }
 
   .platform-workspace-options {

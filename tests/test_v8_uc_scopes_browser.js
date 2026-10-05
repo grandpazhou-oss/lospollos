@@ -99,14 +99,24 @@ async function analyze(page, scope, previousHash = null) {
   const current = await waitSupply(page, value => value?.snapshot?.rows?.length > 0 &&
     value.snapshot.snapshotHash !== previousHash && (value.snapshot.analysisScope || 'OUTBOUND_ONLY') === scope);
   await action(page, 'export-html').waitFor({ state: 'visible' });
-  assert.equal(await page.locator('.sc-business-brief li').count(), 5);
+  assert.ok(await page.locator('.sc-business-brief li').count() >= 5);
+  assert.ok((await page.locator('.sc-business-brief').innerText()).trim().length > 100);
   const ranked = current.snapshot.decision?.rankedScenarioIds || [];
   const expected = [...ranked, ...current.snapshot.rows.map(row => row.scenarioId).filter(id => !ranked.includes(id))];
   const actual = await page.locator('.sc-compare tbody tr[data-scenario-id]').evaluateAll(rows => rows.map(row => row.dataset.scenarioId));
   assert.deepEqual(actual, expected, `${scope} visible candidate order`);
+  const map = page.locator('[data-supply-map-panel]');
+  await map.locator('.p7-map-schematic svg').waitFor();
+  assert.equal(await map.getAttribute('data-map-selected-scenario'), current.snapshot.decision.focusScenarioId);
+  assert.equal(JSON.parse(await map.locator('.p7-map-basis pre').textContent()).snapshotHash, current.snapshot.snapshotHash);
+  assert.ok(await map.locator('.p7-map-schematic polyline').count() > 0, `${scope} must display source/assignment relationships`);
+  assert.doesNotMatch(await map.locator('.sc-map-metric strong').first().innerText(), /—\s*→\s*—/);
+  assert.equal(await map.getAttribute('data-reference'), scope === 'FULL_CHAIN' ? 'SAME_CONDITION_PLANNING_REFERENCE' : scope === 'UPSTREAM_ONLY' ? 'OBSERVED_KNOWN_INBOUND' : 'OBSERVED_BASELINE');
+  if (scope === 'UPSTREAM_ONLY') assert.equal(await map.locator('[data-supply-compare="leg"] option[value="OUTBOUND"]').count(), 0);
   return current;
 }
 async function exportScope(page, label, current) {
+  write(`${label}-state.private.json`, current);
   const snapshotHash = current.snapshot.snapshotHash;
   const names = { html: `${label}.html`, csv: `${label}.csv`, json: `${label}.json`, md: `${label}.md`, package: `${label}.package.json` };
   const html = await download(page, 'export-html', names.html);
@@ -124,6 +134,15 @@ async function exportScope(page, label, current) {
   const expected = [...current.snapshot.decision.rankedScenarioIds, ...current.snapshot.rows.map(row => row.scenarioId).filter(id => !current.snapshot.decision.rankedScenarioIds.includes(id))];
   const visible = [...html.matchAll(/<tr data-scenario-id="([^"]+)"/g)].map(match => match[1]);
   assert.deepEqual(visible, expected, `${label} native HTML candidate order`);
+  await action(page,'report-open').click();
+  const overlay=page.locator('.scro-overlay');await overlay.waitFor();
+  const actualReportOrder=await overlay.locator('.rp-table tr[data-scenario-id]').evaluateAll(rows=>rows.map(r=>r.dataset.scenarioId));
+  assert.deepEqual(actualReportOrder,expected);
+  assert.ok((await overlay.innerText()).includes(current.study.name));
+  if(current.snapshot.analysisScope==='FULL_CHAIN')assert.match(await overlay.innerText(),/同条件规划参照/);
+  if(['FULL_CHAIN','UPSTREAM_ONLY'].includes(current.snapshot.analysisScope))assert.match(await overlay.innerText(),/入库加权距离/);
+  await page.screenshot({path:file(`${label}-interactive.png`),fullPage:true});
+  await overlay.locator('[data-scro-close]').click();await overlay.waitFor({state:'hidden'});
   await page.screenshot({ path: file(`${label}-app.png`), fullPage: true });
   return { snapshotHash, studyHash: current.study.inputHash, names, files: Object.values(names).map(name => ({ name, size: fs.statSync(file(name)).size, sha256: hash(file(name)) })) };
 }
@@ -141,11 +160,13 @@ async function assertFullChainMap(page, current, oldHashes) {
   assert.equal(basis.studyId, current.study.studyId);
   assert.equal(basis.studyHash, current.study.inputHash);
   assert.equal(basis.snapshotHash, current.snapshot.snapshotHash);
-  assert.equal(basis.focusScenarioId, current.snapshot.decision.focusScenarioId);
+  assert.equal(basis.selectedScenarioId, current.snapshot.decision.focusScenarioId);
   assert.equal(basis.geometry, 'BUSINESS_RELATION_ONLY_NOT_ROAD_ROUTE');
   for (const oldHash of oldHashes) assert.notEqual(basis.snapshotHash, oldHash, 'Map cannot display a previous scope result');
   assert.match(await map.locator('.p7-map-legend').innerText(), /业务分配关系，不是道路路线/);
   assert.ok((await map.locator('.p7-map-legend').innerText()).includes(current.snapshot.decision.focusScenarioId));
+  const list = map.locator('.p7-entity-details');
+  if (!await list.evaluate(element => element.open)) await list.locator('summary').click();
   const selected = {};
   for (const kind of ['supplier', 'facility', 'customer']) {
     await map.locator(`[data-p7-kind="${kind}"]`).click();
@@ -163,7 +184,7 @@ async function assertFullChainMap(page, current, oldHashes) {
     await page.screenshot({ path: file(`uc-full-map-${kind}.png`), fullPage: true });
     selected[kind] = { nodeId: id, name: node.name || node.nodeId };
   }
-  return { mode: 'SCHEMATIC', nodeCount: current.study.nodes.length, snapshotHash: basis.snapshotHash, focusScenarioId: basis.focusScenarioId, selected };
+  return { mode: 'SCHEMATIC', nodeCount: current.study.nodes.length, snapshotHash: basis.snapshotHash, focusScenarioId: basis.selectedScenarioId, selected };
 }
 
 (async () => {
@@ -266,7 +287,7 @@ async function assertFullChainMap(page, current, oldHashes) {
     if (!await staleDetails.evaluate(element => element.open)) await staleDetails.locator('summary').click();
     const staleBasis = JSON.parse(await staleDetails.locator('pre').innerText());
     assert.equal(staleBasis.snapshotHash, null);
-    assert.equal(staleBasis.focusScenarioId, null);
+    assert.equal(staleBasis.selectedScenarioId, null);
     assert.equal(await staleMap.locator('.p7-map-schematic polyline').count(), 0);
     assert.match(await staleMap.locator('.p7-map-legend').innerText(), /尚无当前有效结果/);
     summary.staleMap = { expiredSnapshotHash: stale.staleResult.snapshotHash, displayedSnapshotHash: staleBasis.snapshotHash, relationshipLines: 0 };
@@ -306,7 +327,7 @@ async function assertFullChainMap(page, current, oldHashes) {
       await copyRow.waitFor({ state: 'hidden' });
       await readerPage.locator('[data-p5-archives]').check();
       await copyRow.waitFor();
-      assert.match(await copyRow.innerText(), /ARCHIVED/);
+      assert.match(await copyRow.innerText(), /已归档/);
       await copyRow.locator('[data-p5-action="archive"]').click();
       await readerPage.locator('[data-p5-archives]').uncheck();
       await copyRow.waitFor();

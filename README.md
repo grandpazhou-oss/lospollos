@@ -36,6 +36,8 @@ bash /path/to/lospollos/stop_demo.sh
 
 脚本只会停止由本项目记录并核验过的 PID，不会结束占用同一端口的其他进程。运行记录与日志写入 `.run/`，也可通过 `STCT_RUN_DIR` 指向仓库外目录。
 
+Windows 单机受控试用的独立启停入口与当前验收边界见 [README-WINDOWS-LOCAL-TRIAL.md](README-WINDOWS-LOCAL-TRIAL.md)。
+
 ## 优化引擎
 
 页面始终可以独立启动。若本机 Python 已安装 OR-Tools，优化服务在 `OPT_PORT` 提供真实 OR-Tools 求解；否则页面明确降级为 `Demo Heuristic`，不会把演示算法标为 OR-Tools。
@@ -81,6 +83,8 @@ DISABLE_ORTOOLS=1 bash /path/to/lospollos/start_demo.sh
 数据边界与外发检查见 [DATA_CLASSIFICATION.md](DATA_CLASSIFICATION.md)。
 
 浏览器运行库 `vendor/maplibre/` 与 `vendor/xlsx/` 已固定在仓库内，避免本地 Demo 依赖公共 CDN；版本和来源见 `vendor/NOTICE.md`。地图样式与瓦片仍由 OpenFreeMap/OpenStreetMap 在线资源提供，断网、样式服务失败或浏览器不支持 WebGL 时，系统会保留非地图操作并显示明确提示。演示距离为球面直线距离乘以 `config.js` 中的 `roadDistanceFactor`（默认 1.35），不等同于真实导航道路里程。
+
+供应链分析结果页现在在同一界面展示参照与候选的网络分配关系，可切换候选、期间、上游/配送段及叠加视图。线条是业务关联示意，不是道路路线；全链分析使用同条件规划参照。无 WebGL 时复用地图的 SVG 示意图和节点列表。公共 OSRM 道路预览默认关闭，只有在本地配置同时明确开启预览和坐标外发确认后才会请求公共服务；Windows 和 macOS 均沿用同一浏览器实现。
 
 ## 当前活动链路
 
@@ -165,3 +169,10 @@ STCT_BROWSER_NODE=/path/to/node STCT_NODE_PATH=/path/to/node_modules \
 - 数据留在本地浏览器和本机进程；请勿上传敏感或受监管数据。
 - 当前没有生产级数据库、审计、备份、SLA、访问控制或真实导航路由服务。
 - 发布到公司服务器前仍需完成安全、合规、基础设施和物理设备验收。
+
+
+## V87 地图对照与隔离试用
+
+供应链结果页统一使用参照／候选关系地图。比较表与地图候选控件共享当前查看方案；正式排名和报告推荐保持结果快照的原决策。可以按期间、运输段、节点及关系变化筛选，点击关系名称定位；坐标缺失的记录保留在列表。期间筛选只改变关系显示，距离卡片仍明确为全期指标。连线不是道路路线。
+
+复用 `scripts/local_trial.py` 启动受控入口（默认页面 8865、求解 8887）。启动器核对首页字节和后端源码指纹，并拒绝受保护的 8787/8877/8791。Windows 实机与真实 OSRM 验收按用户安排留到 Windows 环境；本轮不切换原 Mac 服务。真人试用操作和记录要求见 `docs/HUMAN_TRIAL_SCRIPT.md`。

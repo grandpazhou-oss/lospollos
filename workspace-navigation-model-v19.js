@@ -50,6 +50,12 @@
         item("/command/recovery", "route.command.recovery", "↶"),
         item("/command/shift-review", "route.command.shift", "▦"),
       ]) }),
+      Object.freeze({ labelKey: "group.analytics", items: Object.freeze([
+        item("/command/analysis", "route.command.analysis", "▤"),
+        item("/command/cost", "route.command.cost", "$"),
+        item("/command/carbon", "route.command.carbon", "◎"),
+        item("/command/report", "route.command.report", "▦"),
+      ]) }),
     ]),
   });
 

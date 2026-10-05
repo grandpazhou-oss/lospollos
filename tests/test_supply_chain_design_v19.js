@@ -72,7 +72,8 @@ const generationScenario={type:'NETWORK_CANDIDATE',facilityCounts:[1,2],distance
 const request=Design.solverRequest(study,generationScenario);
 const fixedSiteRequest=Design.solverRequest(study,{type:'FIXED_SITE_REASSIGNMENT',selectedSiteIds:['A'],facilityCounts:[1],distanceBasis:'VERIFIED_ROAD'});
 assert.equal(fixedSiteRequest.payload.sites.find(row=>row.siteId==='A').status,'REQUIRED_OPEN');
-assert.equal(fixedSiteRequest.payload.sites.find(row=>row.siteId==='B').status,'FORBIDDEN');
+assert.equal(fixedSiteRequest.payload.sites.some(row=>row.siteId==='B'),false);
+assert.equal(fixedSiteRequest.payload.matrix.rows.some(row=>row.siteId==='B'),false);
 assert.throws(()=>Design.solverRequest(study,{type:'FIXED_SITE_REASSIGNMENT',facilityCounts:[1],distanceBasis:'VERIFIED_ROAD'}),{code:'SUPPLY_FIXED_SITE_SET_REQUIRED'});
 assert.throws(()=>Design.evaluatePortfolio(study,{type:'FIXED_SITE_REASSIGNMENT',distanceBasis:'VERIFIED_ROAD'},[{demandId:'D',siteNodeId:'A'}]),{code:'SUPPLY_FIXED_SITE_SET_REQUIRED'});
 assert.ok(Design.evaluatePortfolio(study,{type:'FIXED_SITE_REASSIGNMENT',selectedSiteIds:['A'],distanceBasis:'VERIFIED_ROAD'},[{demandId:'D',siteNodeId:'B'}]).issues.some(row=>row.code==='SUPPLY_ASSIGNMENT_SITE_CLOSED'));

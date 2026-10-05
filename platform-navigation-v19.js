@@ -266,6 +266,9 @@
         elements.breadcrumb.textContent = localeText("platform.name", snapshot.locale);
       }
       elements.breadcrumb.setAttribute("aria-label", localeText("nav.breadcrumb", snapshot.locale));
+      let appearance = elements.shell.querySelector(".platform-theme-corner");
+      if (!appearance) { appearance=documentValue.createElement("div");appearance.className="platform-theme-corner";elements.shell.append(appearance); }
+      appearance.innerHTML=root.STCTPlatformV19?.theme?.toggle(snapshot.locale)||"";
       syncAccessibility(model);
       if (lastBusinessWorkspace && lastBusinessWorkspace !== model.businessWorkspace && model.activeWorkspace !== "PLATFORM") {
         elements.live.textContent = localeText("announce.workspace", snapshot.locale, { workspace: model.businessWorkspace });

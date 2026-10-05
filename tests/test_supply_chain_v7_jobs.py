@@ -61,11 +61,16 @@ def await_done(manager, job_id, timeout=8):
 
 def assert_gone(pid):
     if pid is not None:
-        with unittest.TestCase().assertRaises(ProcessLookupError):
+        with unittest.TestCase().assertRaises(OSError if os.name == 'nt' else ProcessLookupError):
             os.kill(pid, 0)
 
 
 class ContractTests(unittest.TestCase):
+    def test_worker_process_options_keep_host_specific_flags(self):
+        self.assertEqual(jobs.worker_process_options('darwin'), {'start_new_session': True})
+        with patch.object(jobs.subprocess, 'CREATE_NEW_PROCESS_GROUP', 512, create=True), patch.object(jobs.subprocess, 'CREATE_NO_WINDOW', 134217728, create=True):
+            self.assertEqual(jobs.worker_process_options('win32'), {'creationflags': 134218240})
+
     def test_strict_envelope_adversarial_vectors(self):
         bad = [None, [], 'bad']
         for patch_value in [ {'requests': [None]}, {'requests': ['bad']}, {'requests': []}, {'studyHash': None}, {'studyHash': 'not-sha'},
@@ -166,7 +171,10 @@ class ControlledLifecycleTests(unittest.TestCase):
     def test_worker_signal_during_preparation_is_failure(self):
         final = self.run_program('import os,signal;os.kill(os.getpid(),signal.SIGTERM)')
         self.assertEqual(final['status'], 'FAILED')
-        self.assertEqual(final['exitCode'], -signal.SIGTERM)
+        if os.name == 'nt':
+            self.assertNotEqual(final['exitCode'], 0)
+        else:
+            self.assertEqual(final['exitCode'], -signal.SIGTERM)
 
     def test_cancel_preparing_solving_and_partial_retention(self):
         for events in [[], [{'event': 'STARTED'}], result_events()[:-1]]:

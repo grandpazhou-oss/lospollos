@@ -98,7 +98,21 @@
       measure('ATOMIC_COMMIT_AND_READBACK',started);
       return {status:'SAVED',pointer:clone(saved),performance:{storageCommitMs,readbackMs:performance.now()-readbackStarted,evidenceClass:'MEASURED'}};
     }
-    return Object.freeze({open,read,list:store=>read(store),record,commit,subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn);},close(){closed=true;db?.close();db=null;listeners.clear();},diagnostics(){return{schemaVersion:SCHEMA_VERSION,storage:'NATIVE_INDEXED_DB',origin:globalThis.location?.origin||'TEST',database:name,listenerCount:listeners.size,metrics:clone(metrics),open:Boolean(db),boundary:'LOCAL_BROWSER_PROFILE_AND_ORIGIN'};}});
+    async function removeMany(entries,auditEntry){
+      const started=performance.now();
+      for(const entry of entries){validStore(entry.store);if(!entry.id||typeof entry.id!=='string')throw error('RECORD_ID_REQUIRED');}
+      const handle=await open();
+      await new Promise((resolve,reject)=>{
+        const tx=handle.transaction(STORES,'readwrite');let failure=null;
+        tx.onabort=()=>reject(failure||error(tx.error?.name==='QuotaExceededError'?'STORAGE_QUOTA_EXCEEDED':'STORAGE_TRANSACTION_FAILED',tx.error?.name));
+        tx.onerror=()=>{};
+        tx.oncomplete=()=>resolve();
+        for(const {store,id} of entries){if(store==='audit')continue;tx.objectStore(store).delete(id);}
+        if(auditEntry)tx.objectStore('audit').put(auditEntry);
+      });
+      measure('REMOVE',started);
+    }
+    return Object.freeze({open,read,list:store=>read(store),record,commit,removeMany,subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn);},close(){closed=true;db?.close();db=null;listeners.clear();},diagnostics(){return{schemaVersion:SCHEMA_VERSION,storage:'NATIVE_INDEXED_DB',origin:globalThis.location?.origin||'TEST',database:name,listenerCount:listeners.size,metrics:clone(metrics),open:Boolean(db),boundary:'LOCAL_BROWSER_PROFILE_AND_ORIGIN'};}});
   }
   return Object.freeze({SCHEMA_VERSION,STORES,createRepository});
 });

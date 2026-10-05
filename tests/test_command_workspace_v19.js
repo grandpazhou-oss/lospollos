@@ -52,11 +52,11 @@ async function main() {
     ["T0186", "mapView", "/command/dispatch"],
     ["T0187", "experience-replay", "/command/mission-control"],
     ["T0188", "experience-v17", "/command/execution"],
-    ["T0189", "analysisView", "/command/plan-vs-actual"],
+    ["T0189", "analysisView", "/command/analysis"],
     ["T0190", "experience-v16", "/command/execution"],
     ["T0191", "exceptionsView", "/command/alerts"],
     ["T0192", "experience-v16", "/command/execution"],
-    ["T0193", "reportView", "/command/shift-review"],
+    ["T0193", "reportView", "/command/report"],
   ];
 
   check("T0183", adapter.schemaVersion === "stct-command-workspace-adapter-v1.9-p3" && registry.diagnostics().missingContracts.length === 0, { adapter: adapter.schemaVersion, registry: registry.schemaVersion }, "stable adapter and mount descriptor schemas");
@@ -206,7 +206,7 @@ async function main() {
   const indexHtml = source("index.html");
   const uploadSource = source("upload.js");
   check("T0241", indexHtml.includes("xlsx.full.min.js") && indexHtml.includes("upload.js") && uploadSource.includes("setRawData") && uploadSource.includes("raw-dispatch-template.xlsx") && fs.existsSync(path.join(repo, "templates", "raw-dispatch-template.xlsx")), "Excel parser, upload validation/application flow, blank template present", "original Excel workflows available");
-  check("T0242", Legacy.currentInventoryComplete() && Legacy.mapsOperationalTabsToCommand() && adapter.registerRoutes().length === 9, { legacy: Legacy.CURRENT_NAV_INVENTORY.length, commandRoutes: adapter.registerRoutes().length }, "before inventory and after mount registry complete");
+  check("T0242", Legacy.currentInventoryComplete() && Legacy.mapsOperationalTabsToCommand() && adapter.registerRoutes().length === 13, { legacy: Legacy.CURRENT_NAV_INVENTORY.length, commandRoutes: adapter.registerRoutes().length }, "before inventory and after mount registry complete");
   const retainedPrimary = ["planning-v12.js", "simulation-store-v15.js", "execution-reducer-v17.js", "driver-simulator-v16.js", "operations-alerts-v16.js", "rolling-recovery-v16.js", "shift-review-v17.js"];
   check("T0243", retainedPrimary.every((file) => fs.existsSync(path.join(repo, file))) && capabilities.length >= retainedPrimary.length, retainedPrimary, "existing primary functions retained");
   check("T0244", assertions.length === 61 && assertions.every((row) => row.status === "PASS"), { completedBeforeSummary: assertions.length, failed: assertions.filter((row) => row.status !== "PASS") }, "61 prior official assertions PASS and summary generated");

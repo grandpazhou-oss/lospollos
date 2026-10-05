@@ -299,6 +299,7 @@
       const selected = context.snapshot().current;
       if (!pointerId && !selected) fail("CURRENT_STUDY_REQUIRED");
       const row = pointerId ? await pointer(pointerId) : null;
+      if (row?.type === "OPERATIONAL_VALIDATION") return legacyService.exportPackage([pointerId]);
       const kind = row ? kindForPointer(row) : selected.studyKind;
       if (!kind || !capabilities(kind).canExportPackage) fail("STUDY_KIND_NOT_EXPORTABLE");
       if (row) assertGraph(row, kind);

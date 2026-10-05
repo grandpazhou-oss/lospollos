@@ -1,0 +1,84 @@
+#!/usr/bin/env node
+'use strict';
+// Saved native-study readback and map controls only; no state injection.
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http');
+const {chromium}=require('playwright');
+const root=process.env.STCT_MAP_ROOT||path.resolve(__dirname,'..'),out=process.env.STCT_MAP_EVIDENCE||path.join(require('node:os').tmpdir(),'stct-map-ux');
+const packages=process.env.STCT_MAP_PACKAGES;assert.ok(packages,'STCT_MAP_PACKAGES required');fs.mkdirSync(out,{recursive:true});
+const baseline=process.env.STCT_MAP_BASELINE==='1',live=process.env.STCT_MAP_LIVE==='1';
+const log={status:'RUNNING',method:'Home -> upload existing native study -> visible map controls and pointer/keyboard input; runtime reads for assertions only',liveBasemap:live,checks:[],pageErrors:[],consoleErrors:[]};
+const server=http.createServer((req,res)=>{const file=path.resolve(root,'.'+decodeURIComponent(new URL(req.url,'http://127.0.0.1').pathname));if(!file.startsWith(root+path.sep))return res.writeHead(403).end();fs.readFile(file,(error,body)=>error?res.writeHead(404).end():res.writeHead(200,{'content-type':({'.js':'text/javascript','.css':'text/css','.html':'text/html','.json':'application/json','.svg':'image/svg+xml'})[path.extname(file)]||'application/octet-stream'}).end(body));});
+async function mapTool(container,selector){const button=container.locator(selector),group=button.locator('xpath=ancestor::details[contains(@class,"p7-tool-group")][1]');if(await group.count()&&!await group.evaluate(e=>e.open))await group.locator(':scope > summary').click();await button.click();}
+(async()=>{let browser,page;try{
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ browser=await chromium.launch({executablePath:process.env.STCT_BROWSER||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true,args:['--no-sandbox','--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+ const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+ await context.route('**/*',route=>{const u=new URL(route.request().url());return ['127.0.0.1','localhost'].includes(u.hostname)||['blob:','data:'].includes(u.protocol)||live&&u.hostname==='tiles.openfreemap.org'?route.continue():route.abort();});
+ page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>log.pageErrors.push(e.message));page.on('console',m=>{if(m.type()==='error')log.consoleErrors.push(m.text());});
+ const url=`http://127.0.0.1:${server.address().port}/index.html?forceHeuristic=1#/`;await page.goto(url);
+ await page.locator('#loginForm .login-btn').click();await page.locator('.platform-home').waitFor();await page.locator('.platform-home-action[data-platform-route="/design/supply-chain-study"]').click();
+ const compare=name=>page.locator(`[data-supply-compare="${name}"]`),panel=()=>page.locator('[data-supply-map-panel]');
+ const diagnostics=()=>page.evaluate(()=>window.STCTPlatformV19.mapRuntime.diagnostics());
+ const snapshot=()=>page.evaluate(()=>JSON.stringify(window.STCTPlatformV19.instance.designAdapter.supplySnapshot().snapshot));
+ const fullscreen=()=>page.locator('dialog.p7-map-fullscreen[open]');
+ let pageOverflow='';
+ const selection=d=>{const v=d.viewStates.SUPPLY;return {selectedEntityId:v.selectedEntityId,selectedRelationId:v.selectedRelationId,relatedOnly:v.relatedOnly,searchQuery:v.searchQuery,activeLayerIds:v.activeLayerIds};};
+ async function openFullscreen(){
+  const before=await diagnostics(),saved=await snapshot();pageOverflow=await page.evaluate(()=>document.body.style.overflow);
+  assert.equal(await fullscreen().count(),0);await panel().locator('[data-p7-expand]').click();await fullscreen().waitFor();
+  assert.equal(await fullscreen().count(),1);assert.equal(await panel().locator('[data-p7-expand]').getAttribute('aria-expanded'),'true');
+  assert.equal(await panel().locator('[data-p7-expand]').isVisible(),false);assert.equal(await page.evaluate(()=>document.activeElement.hasAttribute('data-p7-fullscreen-close')),true);
+  const after=await diagnostics();assert.equal(after.fullscreen,true);assert.equal(after.mapInstances,before.mapInstances);assert.deepEqual(selection(after),selection(before));assert.equal(await snapshot(),saved);
+ }
+ async function closeFullscreen(keyboard=false){
+  const before=await diagnostics(),saved=await snapshot();
+  if(keyboard)await fullscreen().locator('[data-p7-fullscreen-close]').press('Escape');else await fullscreen().locator('[data-p7-fullscreen-close]').click();
+  assert.equal(await fullscreen().count(),0);assert.equal(await page.evaluate(()=>document.activeElement.hasAttribute('data-p7-expand')),true);
+  assert.equal(await panel().locator('[data-p7-expand]').getAttribute('aria-expanded'),'false');assert.equal(await page.evaluate(()=>document.body.style.overflow),pageOverflow);
+  const after=await diagnostics();assert.equal(after.fullscreen,false);assert.equal(after.mapInstances,before.mapInstances);assert.deepEqual(selection(after),selection(before));assert.equal(await snapshot(),saved);
+ }
+
+ async function upload(file){await page.locator('[data-supply-action="step"][data-supply-id="0"]').click();const input=page.locator('[data-supply-file="study"]'),details=input.locator('xpath=ancestor::details[1]');if(await details.count()&&!await details.evaluate(e=>e.open))await details.locator('summary').click();await input.setInputFiles(path.isAbsolute(file)?file:path.join(packages,file));await panel().waitFor();await page.waitForFunction(()=>window.STCTPlatformV19.mapRuntime.diagnostics().layers.includes('p7-supply-relations-candidate')||window.STCTPlatformV19.mapRuntime.diagnostics().mode==='SCHEMATIC');await panel().locator('.p7-map-viewport').scrollIntoViewIfNeeded();}
+ async function point(id){const p=await page.evaluate(id=>window.STCTPlatformV19.mapRuntime.project(id),id),box=await panel().locator('.p7-map-canvas').boundingBox();assert.ok(p&&box);return {x:box.x+p.x,y:box.y+p.y};}
+ await upload('uc-full.package.json');/* Exercise individual-point mode; clustering has its own browser suite. */await panel().locator('[data-p7-toolgroup=layers] > summary').click();await panel().locator('.p7-exploration-settings summary').click();await panel().locator('[data-p7-clusters]').uncheck();await panel().locator('.p7-exploration-settings summary').click();const packed=JSON.parse(fs.readFileSync(path.join(packages,'uc-full.package.json'),'utf8')),initial=await snapshot(),initialModel=await page.evaluate(()=>window.STCTPlatformV19.mapRuntime.snapshot());
+ const warehouse=packed.study.nodes.find(n=>['DC','WAREHOUSE'].includes(n.role)&&packed.study.nodes.some(o=>o.nodeId!==n.nodeId&&o.coordinate&&JSON.stringify(o.coordinate)===JSON.stringify(n.coordinate)));
+ assert.ok(warehouse,'Native dataset must have overlapping business objects');
+ if(baseline){const before=(await diagnostics()).viewStates.SUPPLY.zoom;await panel().locator(`.p7-map-list [data-p7-entity="${warehouse.nodeId}"]`).click();await page.waitForTimeout(150);log.checks.push({beforeZoom:before,afterZoom:(await diagnostics()).viewStates.SUPPLY.zoom,hoverAvailable:await panel().locator('.p7-map-tooltip').count(),relatedControl:await panel().locator('[data-p7-related]').count()});await page.screenshot({path:path.join(out,'before-node-selection.png')});log.status='BASELINE_CAPTURED';return;}
+ assert.equal(await panel().locator('.p7-map-inspector').isVisible(),false);
+ await openFullscreen();
+ assert.equal(await panel().locator('.p7-entity-details').isVisible(),false);
+ if(live)await page.waitForFunction(()=>window.STCTPlatformV19.mapRuntime.diagnostics().renderedBasemapFeatureCount>0);await page.waitForTimeout(500);let pos=await point(warehouse.nodeId);log.pointer={pos,hit:await page.evaluate(p=>document.elementFromPoint(p.x,p.y)?.outerHTML.slice(0,400),pos),view:(await diagnostics()).viewStates.SUPPLY};await page.mouse.move(pos.x,pos.y);await panel().locator('.p7-map-tooltip').waitFor();assert.match(await panel().locator('.p7-map-tooltip').innerText(),new RegExp(warehouse.name));
+ const beforeClick=(await diagnostics()).viewStates.SUPPLY.zoom;await page.mouse.click(pos.x,pos.y);await panel().locator('.p7-map-picker').waitFor();
+ const coLocated=packed.study.nodes.filter(n=>JSON.stringify(n.coordinate)===JSON.stringify(warehouse.coordinate));const choices=await panel().locator('[data-p7-pick]').evaluateAll(es=>es.map(e=>e.dataset.p7Pick));assert.ok(coLocated.filter(n=>['FACTORY','SUPPLIER','DC','WAREHOUSE'].includes(n.role)).every(n=>choices.includes(n.nodeId)));
+ await panel().locator(`[data-p7-pick="${warehouse.nodeId}"]`).press('Enter');assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,warehouse.nodeId);assert.ok(Math.abs((await diagnostics()).viewStates.SUPPLY.zoom-beforeClick)<.01,'Map selection must not jump zoom');
+ assert.equal(await panel().locator('.p7-map-inspector').isVisible(),true);assert.match(await panel().locator('.p7-map-focusbar').innerText(),new RegExp(warehouse.name));
+ const allCount=(await diagnostics()).renderedEntityIds.length;await panel().locator('[data-p7-related]').click();const focusedCount=(await diagnostics()).renderedEntityIds.length;assert.ok(focusedCount>0&&focusedCount<allCount,'Connected view reduces clutter');
+ const model=await page.evaluate(()=>window.STCTPlatformV19.mapRuntime.snapshot()),d=await diagnostics();assert.deepEqual(model,initialModel);const connected=new Set([warehouse.nodeId]);for(const f of model.features)if(f.geometry.type==='LineString'&&[f.properties.fromNodeId,f.properties.toNodeId].includes(warehouse.nodeId)){connected.add(f.properties.fromNodeId);connected.add(f.properties.toNodeId);}assert.ok(d.renderedEntityIds.every(id=>connected.has(id)));
+ assert.equal(d.mapInstances,1);assert.equal(await snapshot(),initial);
+ await panel().locator('.p7-map-viewport').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(out,'after-node-focus.png')});
+ await closeFullscreen(true);assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,warehouse.nodeId);assert.equal((await diagnostics()).viewStates.SUPPLY.relatedOnly,true);
+ await panel().locator('[data-p7-clear-focus]').click();assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,'');assert.equal(await panel().locator('.p7-map-inspector').isVisible(),false);
+ // List/keyboard selection fits the entire connected extent, instead of zooming only to the warehouse.
+ if(!await panel().locator('.p7-entity-details').evaluate(e=>e.open))await panel().locator('[data-p7-objects]').click();
+ await panel().locator(`.p7-map-list [data-p7-entity="${warehouse.nodeId}"]`).press('Enter');assert.ok((await diagnostics()).viewStates.SUPPLY.zoom<10);
+ await panel().locator('[data-p7-clear-focus]').click();assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,'');assert.equal(await snapshot(),initial);
+ log.checks.push({name:'Native UC: hover/overlapping object chooser/no jump/connected focus/reset/keyboard/list fit/one map',status:'PASS',choices,allCount,focusedCount});
+ for(const locale of ['en','ja','zh']){await page.locator('.platform-locale-control select').selectOption(locale);assert.match(await panel().locator('[data-p7-expand]').innerText(),{en:/Full-screen map/,ja:/地図を全画面表示/,zh:/全屏地图/}[locale]);await openFullscreen();assert.match(await fullscreen().locator('[data-p7-fullscreen-close]').innerText(),{en:/Exit full screen/,ja:/全画面を終了/,zh:/退出全屏/}[locale]);await closeFullscreen();}
+ const ids=await compare('scenarioId').locator('option').evaluateAll(es=>es.map(e=>e.value));if(ids.length>1)await compare('scenarioId').selectOption(ids[1]);assert.equal(await snapshot(),initial);
+ await openFullscreen();
+ for(const [field,value] of [['change','CHANGED'],['mode','CANDIDATE'],['period',packed.study.periods[0]],['change','ALL'],['mode','BOTH'],['period','ALL']]){
+  if(['change','period'].includes(field)){const filters=panel().locator('.sc-map-filters');if(!await filters.evaluate(node=>node.open))await filters.locator('summary').click();}
+  await compare(field).focus();await compare(field).selectOption(value);await fullscreen().waitFor();assert.equal(await fullscreen().count(),1);assert.equal(await page.evaluate(()=>document.activeElement.dataset.supplyCompare),field);assert.equal(await snapshot(),initial);
+ }
+ await closeFullscreen();
+ if(live){await page.waitForFunction(()=>window.STCTPlatformV19.mapRuntime.diagnostics().renderedBasemapFeatureCount>0);log.checks.push({name:'Actual OpenFreeMap basemap and business layer coexist',status:'PASS'});}
+ await panel().locator('.p7-map-viewport').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(out,'after-network-desktop.png')});
+ await page.setViewportSize({width:390,height:844});await panel().locator('.p7-map-viewport').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(out,'mobile-390.png')});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+ await openFullscreen();const mobileDialog=await fullscreen().boundingBox(),mobileClose=await fullscreen().locator('[data-p7-fullscreen-close]').boundingBox();assert.ok(mobileDialog&&mobileDialog.x>=-1&&mobileDialog.x+mobileDialog.width<=391);assert.ok(mobileClose&&mobileClose.y>=0&&mobileClose.y+mobileClose.height<=844);await page.screenshot({path:path.join(out,'mobile-390-fullscreen.png')});await closeFullscreen();
+ if(!await panel().locator('.p7-entity-details').evaluate(e=>e.open))await panel().locator('[data-p7-objects]').click();await page.locator('[data-p7-kind="facility"]').click();await panel().locator(`.p7-map-list [data-p7-entity="${warehouse.nodeId}"]`).click();await panel().locator('[data-p7-related]').click();await panel().locator('[data-p7-clear-focus]').click();assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,'');
+ await page.emulateMedia({media:'print'});await page.waitForFunction(()=>window.STCTPlatformV19.mapRuntime.diagnostics().mode==='SCHEMATIC');assert.ok(await panel().locator('.p7-map-schematic polyline').count()>0);assert.equal(await panel().locator('.p7-map-focusbar').isVisible(),false);await page.emulateMedia({media:'screen'});
+ for(const file of ['uc-outbound.package.json','uc-upstream.package.json']){await upload(file);assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,'');assert.equal((await diagnostics()).viewStates.SUPPLY.relatedOnly,false);await openFullscreen();await closeFullscreen();}
+ if(process.env.STCT_NON_UC_PACKAGE){await upload(process.env.STCT_NON_UC_PACKAGE);assert.equal((await diagnostics()).viewStates.SUPPLY.expanded,false);assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,'');assert.equal(await panel().locator('.p7-map-picker').isVisible(),false);}
+ await page.goto(`http://127.0.0.1:${server.address().port}/index.html?forceHeuristic=1&noWebGL=1#/`);if(await page.locator('#loginForm .login-btn').isVisible())await page.locator('#loginForm .login-btn').click();await page.locator('.platform-home').waitFor();await page.locator('.platform-home-action[data-platform-route="/design/supply-chain-study"]').click();await upload('uc-full.package.json');assert.equal((await diagnostics()).mode,'SCHEMATIC');await openFullscreen();const noGLSnapshot=await snapshot(),marker=panel().locator(`.p7-map-schematic [role="button"][data-p7-entity="${warehouse.nodeId}"]`);await marker.focus();await marker.press('Enter');assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,warehouse.nodeId);await panel().locator('[data-p7-related]').click();assert.equal(await snapshot(),noGLSnapshot);await closeFullscreen(true);assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,warehouse.nodeId);await panel().locator('[data-p7-clear-focus]').click();assert.equal((await diagnostics()).viewStates.SUPPLY.selectedEntityId,'');await page.screenshot({path:path.join(out,'no-webgl-keyboard.png')});
+ assert.deepEqual(log.pageErrors,[]);log.checks.push({name:'Candidate/period/mode filters remain in modal; zh/en/ja; native-dialog open/close/Escape/focus and saved-result preservation; 390px; print; 3 scopes; non-UC reset; No-WebGL SVG keyboard',status:'PASS'});log.status='PASS';log.url=url;log.title=await page.title();
+ }catch(e){log.status='FAIL';log.error=e.stack;if(page)await page.screenshot({path:path.join(out,'failure.png')}).catch(()=>{});process.exitCode=1;}finally{if(browser)await browser.close();await new Promise(r=>server.close(r));fs.writeFileSync(path.join(out,'evidence.json'),JSON.stringify(log,null,2));console.log(JSON.stringify(log));}})();

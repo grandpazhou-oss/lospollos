@@ -18,14 +18,15 @@ const study = Design.createStudy({
 const baseline = Design.evaluatePortfolio(study, { type: 'OBSERVED_BASELINE', distanceBasis: 'VERIFIED_ROAD' });
 const generated = Report.createSnapshot(study, baseline, [], [], { type: 'NETWORK_CANDIDATE', objective: 'VOLUME_KM', objectiveScope: 'OUTBOUND_ONLY', facilityCounts: [1] });
 const snapshot = structuredClone(generated);
-// Isolate CSV number formatting from business-rate validation: a negative ledger number stays numeric.
+// A forged negative ledger cost must fail independent business verification,
+// even after the outer snapshot hash is recomputed.
 snapshot.baseline.inbound[0].cost = -3;
 snapshot.snapshotHash = Design.hash(Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'snapshotHash')));
-for (const service of [Report, V5]) {
-  const csv = service.toCsv(study, snapshot);
-  assert.match(csv, /"'=HYPERLINK/);
-  assert.match(csv, /"'\+cmd"/);
-  assert.match(csv, /"-3"/);
-  assert.doesNotMatch(csv, /"'-3"/);
-}
-console.log(JSON.stringify({ suite: 'SUPPLY_CHAIN_V6_CSV_SECURITY', status: 'PASS', formulaTextNeutralized: true, numericNegativePreserved: true }));
+assert.throws(() => Report.toCsv(study, snapshot), { code: 'SUPPLY_SNAPSHOT_VERIFICATION_FAILED' });
+assert.throws(() => V5.toCsv(study, snapshot));
+const csv = Report.toCsv(study, generated);
+assert.match(csv, /"'=HYPERLINK/);
+assert.match(csv, /"'\+cmd"/);
+assert.match(csv, /"5"/);
+assert.doesNotMatch(csv, /"'5"/);
+console.log(JSON.stringify({ suite: 'SUPPLY_CHAIN_V6_CSV_SECURITY', status: 'PASS', formulaTextNeutralized: true, forgedNegativeLedgerRejected: true, numericQuantityPreserved: true }));

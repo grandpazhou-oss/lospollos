@@ -125,7 +125,7 @@ cleanup_started() {
 trap cleanup_started ERR
 
 start_process "页面服务" "$WEB_PORT" "$WEB_PID_FILE" "$WEB_PORT_FILE" "$WEB_LOG" \
-  "$PYTHON_BIN" -m http.server "$WEB_PORT" --bind 127.0.0.1 --directory "$APP_DIR"
+  "$PYTHON_BIN" "$APP_DIR/scripts/local_web.py" --port "$WEB_PORT"
 
 OPT_START_ERROR=""
 if ! start_process "优化服务" "$OPT_PORT" "$OPT_PID_FILE" "$OPT_PORT_FILE" "$OPT_LOG" \

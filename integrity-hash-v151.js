@@ -26,8 +26,18 @@
   }
 
   function utf8Compare(leftValue, rightValue) {
-    const left = new TextEncoder().encode(text(leftValue));
-    const right = new TextEncoder().encode(text(rightValue));
+    const leftText = text(leftValue), rightText = text(rightValue);
+    // Model field names are usually ASCII; their code units are already UTF-8 bytes.
+    if (/^[\x00-\x7f]*$/.test(leftText) && /^[\x00-\x7f]*$/.test(rightText)) {
+      const length = Math.min(leftText.length, rightText.length);
+      for (let index = 0; index < length; index += 1) {
+        const difference = leftText.charCodeAt(index) - rightText.charCodeAt(index);
+        if (difference) return difference;
+      }
+      return leftText.length - rightText.length;
+    }
+    const left = new TextEncoder().encode(leftText);
+    const right = new TextEncoder().encode(rightText);
     const length = Math.min(left.length, right.length);
     for (let index = 0; index < length; index += 1) {
       if (left[index] !== right[index]) return left[index] - right[index];

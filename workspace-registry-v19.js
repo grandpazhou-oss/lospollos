@@ -33,6 +33,10 @@
       "/command/alerts",
       "/command/recovery",
       "/command/shift-review",
+      "/command/analysis",
+      "/command/cost",
+      "/command/carbon",
+      "/command/report",
     ]),
     PLATFORM: Object.freeze([
       "/",

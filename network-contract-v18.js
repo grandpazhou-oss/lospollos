@@ -76,7 +76,7 @@
   }
   function safeValue(value, field = "value", depth = 0, seen = new WeakSet()) {
     if (depth > LIMITS.maxDepth) fail("NETWORK_DEPTH_LIMIT", `${field} exceeds the object depth limit.`, { field, depth });
-    if (value === null || typeof value === "boolean") return value;
+    if (value === undefined || value === null || typeof value === "boolean") return value === undefined ? null : value;
     if (typeof value === "string") return text(value, field, { allowEmpty: true });
     if (typeof value === "number") {
       if (Number.isInteger(value) && !Number.isSafeInteger(value)) fail("NETWORK_INTEGER_ERROR", `${field} exceeds the JavaScript safe integer range.`, { field, value });
@@ -222,12 +222,35 @@
     const solveContextHash = Integrity.hashValue({ networkInputHash, routingContextHash, solveOptions: safeValue(solveOptions, "solveOptions") });
     return { schemaVersion: "stct-network-identity-v1.8", canonicalVersion: Integrity.VERSION, scenario, networkContentHash, networkInputHash, routingContextHash, solveContextHash };
   }
-  function hashArtifact(value) { return Integrity.hashValue(safeValue(value)); }
+  const _hashMemo = new WeakMap();
+  function hashArtifact(value) {
+    // F17：冻结（不可变）对象的规范哈希按对象身份备忘——不可变性保证哈希稳定，
+    // 校验语义不变（Tamper 无法作用于冻结对象）；非冻结对象每次重算。
+    if (value && typeof value === 'object' && Object.isFrozen(value)) {
+      const hit = _hashMemo.get(value); if (hit) return hit;
+      const out = Integrity.hashValue(safeValue(value));
+      _hashMemo.set(value, out);
+      return out;
+    }
+    return Integrity.hashValue(safeValue(value));
+  }
+  const _bodyHashMemo = new WeakMap();
+  function hashBodyMemoized(obj, omitKey) {
+    // F17：冻结主体的去键规范哈希按对象身份备忘（不可变性保证稳定）；重复校验零重算。
+    const compute = () => hashArtifact(Object.fromEntries(Object.entries(obj).filter(([k]) => k !== omitKey)));
+    if (obj && typeof obj === 'object' && Object.isFrozen(obj)) {
+      const hit = _bodyHashMemo.get(obj); if (hit) return hit;
+      const out = compute();
+      _bodyHashMemo.set(obj, out);
+      return out;
+    }
+    return compute();
+  }
   function verifyHash(value, expected, code = "NETWORK_HASH_MISMATCH") { const actual = hashArtifact(value); if (actual !== expected) fail(code, "Canonical SHA-256 mismatch.", { expected, actual }); return actual; }
   function isSha256(value) { return /^sha256:[a-f0-9]{64}$/.test(String(value || "")); }
 
   return {
     VERSION, LIMITS, NetworkContractError, safeValue, normalizeScenario, contentProjection, identityBundle,
-    hashArtifact, verifyHash, isSha256, canonicalString: Integrity.canonicalString, utf8Compare: Integrity.utf8Compare,
+    hashArtifact, hashBodyMemoized, verifyHash, isSha256, canonicalString: Integrity.canonicalString, utf8Compare: Integrity.utf8Compare,
   };
 });

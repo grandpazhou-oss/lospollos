@@ -299,14 +299,14 @@ def build_routes_savings(dests, dist, time_mat, ws_min, we_min, lunch_s, lunch_e
     savings = compute_savings(dist, depot)
 
     # Each destination starts as its own route
-    routes = {i: [i] for i in range(1, n)}
-    r_w = {i: dests[i-1]['weight_veh'] for i in range(1, n)}
-    r_v = {i: dests[i-1]['volume_veh'] for i in range(1, n)}
+    routes = {i: [i] for i in range(1, n + 1)}
+    r_w = {i: dests[i-1]['weight_veh'] for i in range(1, n + 1)}
+    r_v = {i: dests[i-1]['volume_veh'] for i in range(1, n + 1)}
     r_time = {}
-    r_end = {i: (i, i) for i in range(1, n)}  # (first_stop, last_stop)
+    r_end = {i: (i, i) for i in range(1, n + 1)}  # (first_stop, last_stop)
 
     # Compute initial route times
-    for i in range(1, n):
+    for i in range(1, n + 1):
         ok, end_t = route_time_feasible([i], time_mat, dests, depot,
                                          ws_min, we_min, lunch_s, lunch_e)
         if not ok:

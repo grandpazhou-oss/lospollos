@@ -69,6 +69,16 @@ assert.equal(Results.fromVerified(fixedCostStudy,{...basic,objective:'COST'},fix
 assert.throws(()=>Joint.buildRequest(Design.createStudy({...input,rates:[]}),{...basic,objective:'COST'}),{code:'SUPPLY_COST_OBJECTIVE_INCOMPLETE'});
 const ref=solve(study,basic,true),baseline=Design.evaluatePortfolio(study,{type:'OBSERVED_BASELINE',distanceBasis:'VERIFIED_ROAD'}),reference=Results.fromVerified(study,basic,ref.request,ref.verified[0],0),candidates=two.verified.map((row,index)=>Results.fromVerified(study,basic,two.request,row,index+1));
 const snapshot=Results.createSnapshot(study,baseline,basic,reference,candidates,[{attempted:two.response.attempted,feasible:two.response.feasible,timedOut:two.response.timedOut}],two.request);
+// Distance optimization must still evaluate real tariffs, including relation-period
+// charges shared by several demand records. This is evaluation, not exact cost optimization.
+for(const unit of ['m3','t']){
+  const tariffStudy=Design.createStudy({...input,unit,periodDemand:[...input.periodDemand,{...input.periodDemand[0],demandId:'D3'}].map(row=>({...row,unit})),observedInbound:input.observedInbound.map(row=>({...row,unit})),rates:[{kind:'INBOUND_TRANSPORT',basis:'PER_PERIOD',amount:40,status:'KNOWN'},{kind:'OUTBOUND_TRANSPORT',basis:'PER_PERIOD',amount:10,status:'KNOWN'},{kind:'FIXED_OPERATING',basis:'PER_PERIOD',amount:0,status:'CONFIRMED_ZERO'},{kind:'HANDLING',basis:'PER_PERIOD',amount:3,status:'KNOWN'}]});
+  const tariff=solve(tariffStudy,basic),evaluated=Results.fromVerified(tariffStudy,basic,tariff.request,tariff.verified[0],1);
+  assert.equal(evaluated.metrics.operatingCost,2*40+2*10+2*3);
+  assert.equal(evaluated.outbound.reduce((total,row)=>total+row.cost,0),20);
+  assert.equal(evaluated.inbound.reduce((total,row)=>total+row.cost,0),80);
+  assert.throws(()=>Joint.buildRequest(tariffStudy,{...basic,objective:'COST'}));
+}
 assert.equal(snapshot.rows[0].metrics.totalVolumeKm,40);
 assert.match(Results.toCsv(study,snapshot),/S1/);
 assert.match(Results.toHtml(study,snapshot),/40/);

@@ -12,6 +12,10 @@
 
   const COPY = Object.freeze({
     en: Object.freeze({
+      "route.command.analysis.heading": "Transport analysis",
+      "route.command.cost.heading": "Transport costs",
+      "route.command.carbon.heading": "Carbon estimates",
+      "route.command.report.heading": "Transport report",
       "workspace.design.description": "Network Design & Strategic Planning",
       "workspace.command.description": "Transportation Operations & Execution",
       "workspace.platform.description": "Shared platform services",
@@ -55,9 +59,13 @@
       "label.workspaceMenu": "Workspace menu",
       "label.breadcrumb": "Breadcrumb",
       "home.p2": "Platform Gate P2 will implement final workspace cards and navigation.",
-      "error.body": "The requested route could not be mounted. The shell remains controlled and the previous valid route is available for recovery.",
+      "error.body": "This page could not be opened. Choose a page from the workspace menu, or return to the previous page and try again.",
     }),
     zh: Object.freeze({
+      "route.command.analysis.heading": "运输分析",
+      "route.command.cost.heading": "运输成本",
+      "route.command.carbon.heading": "碳排估算",
+      "route.command.report.heading": "运输报告",
       "workspace.design.description": "网络设计与战略规划",
       "workspace.command.description": "运输运营与执行",
       "workspace.platform.description": "共享平台服务",
@@ -101,9 +109,13 @@
       "label.workspaceMenu": "工作区菜单",
       "label.breadcrumb": "面包屑导航",
       "home.p2": "Platform Gate P2 将实现最终工作区卡片和导航。",
-      "error.body": "请求的路由无法挂载。Shell 仍保持受控状态，可通过前一个有效路由恢复。",
+      "error.body": "此页面无法打开。请从工作区菜单选择可用页面，或返回上一页重试。",
     }),
     ja: Object.freeze({
+      "route.command.analysis.heading": "輸送分析",
+      "route.command.cost.heading": "輸送コスト",
+      "route.command.carbon.heading": "排出量推計",
+      "route.command.report.heading": "輸送レポート",
       "workspace.design.description": "ネットワーク設計と戦略計画",
       "workspace.command.description": "輸送オペレーションと実行",
       "workspace.platform.description": "共通プラットフォームサービス",
@@ -147,9 +159,11 @@
       "label.workspaceMenu": "ワークスペースメニュー",
       "label.breadcrumb": "パンくずリスト",
       "home.p2": "Platform Gate P2 で最終的なワークスペースカードとナビゲーションを実装します。",
-      "error.body": "要求されたルートをマウントできませんでした。Shell は制御された状態を維持し、直前の有効なルートから復旧できます。",
+      "error.body": "このページを開けませんでした。ワークスペースメニューからページを選ぶか、前のページに戻って再試行してください。",
     }),
   });
+
+  const WORKSPACE_ROOT_VIEWS = Object.freeze({ "/design": "/design/overview", "/command": "/command/overview" });
 
   function translate(key, locale) {
     const language = COPY[locale] ? locale : "en";
@@ -299,7 +313,11 @@
 
     function renderHome(documentFragment, locale) {
       if (dependencies.Home && typeof dependencies.Home.render === "function") {
-        dependencies.Home.render({ document: documentValue, target: documentFragment, locale });
+        const currentStudy=options.studyContext?.snapshot().current;
+        const value=currentStudy?.studyKind==='SUPPLY_CHAIN_PERIOD'?designAdapter?.supplySnapshot?.():currentStudy?.studyKind==='FACILITY'?designAdapter?.facilitySnapshot?.():null;
+        const saved=value?.savedPointer,dirty=value?.study&&(saved?.inputHash!==value.study.inputHash||saved?.scenario&&JSON.stringify(saved.scenario)!==JSON.stringify(value.scenario));
+        const saveLabel=dirty?({zh:'存在未保存改动',en:'Unsaved changes',ja:'未保存の変更'})[locale]:saved?({zh:'已保存到本机',en:'Saved locally',ja:'ローカル保存済み'})[locale]:({zh:'保存状态请在研究页核对',en:'Check save status in the study',ja:'保存状態は研究画面で確認'})[locale];
+        dependencies.Home.render({ document: documentValue, target: documentFragment, locale, currentStudy:currentStudy?{...currentStudy,name:value?.study?.name,saveLabel}:null,listStudies:services?()=>services.service.list():null });
         return;
       }
       const intro = createElement(documentValue, "div", "platform-home-intro");
@@ -399,12 +417,13 @@
       const elements = ensure();
       const model = createViewModel(snapshot, current);
       if(services?.has(model.logicalPath)){services.sync(snapshot);syncChrome(snapshot,model);return model;}
-      if (model.workspace === "COMMAND" && commandAdapter && commandAdapter.registry.has(model.logicalPath)) {
+      const adapterPath = WORKSPACE_ROOT_VIEWS[model.logicalPath] || model.logicalPath;
+      if (model.workspace === "COMMAND" && commandAdapter && commandAdapter.registry.has(adapterPath)) {
         commandAdapter.sync(snapshot);
         syncChrome(snapshot, model);
         return model;
       }
-      if (model.workspace === "DESIGN" && designAdapter && designAdapter.registry.has(model.logicalPath)) {
+      if (model.workspace === "DESIGN" && designAdapter && designAdapter.registry.has(adapterPath)) {
         designAdapter.sync(snapshot);
         syncChrome(snapshot, model);
         return model;
@@ -436,15 +455,17 @@
           const elements=ensure();elements.outlet.replaceChildren();syncChrome(snapshot,createViewModel(snapshot,current));
           return services.mount(context,{target:elements.outlet,controller,snapshot});
         }
-        const commandDescriptor = commandAdapter && commandAdapter.registry.get(context.logicalPath);
-        const designDescriptor = designAdapter && designAdapter.registry.get(context.logicalPath);
+        const adapterPath = WORKSPACE_ROOT_VIEWS[context.logicalPath] || context.logicalPath;
+        const adapterContext = adapterPath === context.logicalPath ? context : Object.assign({}, context, { logicalPath: adapterPath });
+        const commandDescriptor = commandAdapter && commandAdapter.registry.get(adapterPath);
+        const designDescriptor = designAdapter && designAdapter.registry.get(adapterPath);
         if (commandDescriptor || designDescriptor) {
           const elements = ensure();
           elements.outlet.replaceChildren();
           const model = createViewModel(snapshot, current);
           syncChrome(snapshot, model);
           const adapter = commandDescriptor ? commandAdapter : designAdapter;
-          return adapter.mount(context, { target: elements.outlet, controller, snapshot });
+          return adapter.mount(adapterContext, { target: elements.outlet, controller, snapshot });
         }
         render(snapshot);
         return { cleanup: () => {} };

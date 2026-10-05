@@ -24,7 +24,7 @@ function workbook() {
   try {
     for (let i = 0; i < 100; i++) { if (optimizer.exitCode !== null) throw new Error('isolated optimizer exited'); try { if ((await fetch(`http://127.0.0.1:${optimizerPort}/health`)).ok) break; } catch (_) {} await new Promise(resolve => setTimeout(resolve, 100)); if (i === 99) throw new Error('isolated optimizer unavailable'); }
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-    browser = await chromium.launch({ headless: true, executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox', '--disable-webgl'] });
+    browser = await chromium.launch({ headless: true, executablePath: process.env.STCT_BROWSER || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', args: ['--no-sandbox', '--disable-webgl'] });
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
     await page.goto(`http://127.0.0.1:${server.address().port}/index.html?optPort=${optimizerPort}&noWebGL=1#/design/supply-chain-study`);
     await page.locator('#loginForm .login-btn').click(); await page.waitForSelector('.supply-chain-study.sc-business');
@@ -48,6 +48,7 @@ function workbook() {
     let interrupted;
     for (let i = 0; i < 100; i++) { interrupted = await (await fetch(`http://127.0.0.1:${optimizerPort}/supply-chain-jobs-v6/${interruptedJob}`)).json(); if (interrupted.status === 'CANCELLED') break; await new Promise(resolve => setTimeout(resolve, 20)); }
     assert.equal(interrupted.status, 'CANCELLED');
+    await page.locator('[data-supply-action="step"][data-supply-id="0"]').click();
     await page.locator('[data-supply-action="study-list"]').click();
     await page.locator('[data-supply-action="study-open"]:has-text("cancel-synthetic")').click();
     await page.locator('[data-supply-action="analyze"]').click();

@@ -1,0 +1,22 @@
+{
+  "tag": "26.7.3-debian",
+  "digest": "sha256:a7091038e39a73659767f34ef2d389909b42ea80b09bd2bdca482dce2991cbad",
+  "platforms": [
+    {
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    {
+      "architecture": "unknown",
+      "os": "unknown"
+    },
+    {
+      "architecture": "arm64",
+      "os": "linux"
+    },
+    {
+      "architecture": "unknown",
+      "os": "unknown"
+    }
+  ]
+}

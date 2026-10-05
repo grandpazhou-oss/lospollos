@@ -8,7 +8,7 @@
   const clone=value=>structuredClone(value);
   const fail=(code,detail={})=>{throw Object.assign(new Error(code),{code,detail});};
   const number=value=>typeof value==='number'&&Number.isFinite(value);
-  const same=(a,b)=>Math.abs(a-b)<=1e-8;
+  const same=(a,b)=>Math.abs(a-b)<=Math.max(1e-8,Math.abs(a)*2e-12);
   const sum=rows=>rows.reduce((total,row)=>total+row,0);
   const key=(a,b)=>`${a}\u0000${b}`;
   const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
@@ -81,7 +81,7 @@
     if(sourceMode==='FIXED'&&!rules.length)fail('SUPPLY_FIXED_SOURCE_RULES_REQUIRED');
     return rules;
   }
-  function buildRequest(study,scenario,{reference=false}={}){
+  function buildRequest(study,scenario,{reference=false,quantityScale:scaleOverride=null}={}){
     if(!object(study)||!object(scenario))fail('SUPPLY_JOINT_SCHEMA_INVALID');
     const scope=scenario.analysisScope;
     if(!['UPSTREAM_ONLY','FULL_CHAIN'].includes(scope))fail('SUPPLY_JOINT_SCOPE_INVALID');
@@ -128,7 +128,7 @@
     const suppliers=sourceIds.map(id=>{const condition=scenario.supplierCapacityByPeriod?.[id]||{},fixedTotalByPeriod=totalMode==='FIXED_OBSERVED'?Object.fromEntries(study.periods.map(period=>[period,totals.bySource.get(key(id,period))||0])):{};if(totalMode==='ADJUSTABLE'&&scenario.capacityPolicy==='PROVIDED'&&study.periods.some(period=>condition[period]?.max==null))fail('SUPPLY_SOURCE_CAPACITY_INCOMPLETE',{supplierId:id});return{id,fixedTotalByPeriod,minByPeriod:Object.fromEntries(study.periods.filter(period=>condition[period]?.min!=null).map(period=>[period,condition[period].min])),maxByPeriod:Object.fromEntries(study.periods.filter(period=>condition[period]?.max!=null).map(period=>[period,condition[period].max]))};});
     const sites=allSites.map(site=>{const fixedCostByPeriod={},handlingPerUnitByPeriod={};if(scope==='FULL_CHAIN'&&!forbidden.includes(site.nodeId))for(const period of study.periods){const fixed=fixedCost(study,'FIXED_OPERATING',site.nodeId,period),handling=fixedCost(study,'HANDLING',site.nodeId,period);if(objective==='COST'&&(fixed==null||handling==null))fail('SUPPLY_COST_OBJECTIVE_INCOMPLETE',{kind:fixed==null?'FIXED_OPERATING':'HANDLING',siteId:site.nodeId,period});fixedCostByPeriod[period]=fixed;handlingPerUnitByPeriod[period]=handling;}const receivingByPeriod=scope==='UPSTREAM_ONLY'?Object.fromEntries(study.periods.map(period=>[period,totals.bySite.get(key(site.nodeId,period))||0])):{};const frozenByPeriod=Object.fromEntries(study.periods.map(period=>[period,sum(totals.frozen.filter(row=>row.toNodeId===site.nodeId&&row.period===period).map(row=>row.quantity))]));const capacityByPeriod=Object.fromEntries(study.periods.filter(period=>scenario.capacityByPeriod?.[site.nodeId]?.[period]!=null||site.capacityByPeriod?.[period]!=null).map(period=>[period,scenario.capacityByPeriod?.[site.nodeId]?.[period]??site.capacityByPeriod[period]]));return{id:site.nodeId,status:required.includes(site.nodeId)?'REQUIRED':forbidden.includes(site.nodeId)?'FORBIDDEN':'OPTIONAL',capacityByPeriod,receivingByPeriod,frozenByPeriod,fixedCostByPeriod,handlingPerUnitByPeriod};});
     const payload={schemaVersion:SCHEMA,requestId:`SUPPLY-JOINT-${Date.now()}-${Math.floor(Math.random()*100000)}`,studyHash:study.inputHash,scope,objective,sourceMode,supplierTotalMode:totalMode,unit:study.unit,currency:study.currency,distanceBasis:basis,periods:study.periods,suppliers,sites,demands,inboundEdges:edges,outboundEdges:out,sourceRules:rules,siteCounts:counts,timeLimitSeconds:Math.min(30,Math.max(1,scenario.timeLimitSeconds||10)),maxResultsPerCount:reference?1:Math.min(8,Math.max(1,scenario.maxCandidates||5)),reference};
-    const selectedScale=quantityScaleFor(payload);if(selectedScale>QUANTITY_SCALE){payload.schemaVersion=SCHEMA_V2;payload.quantityScale=selectedScale;}
+    const selectedScale=Math.max(quantityScaleFor(payload),Number.isInteger(scaleOverride)?scaleOverride:0);if(selectedScale>QUANTITY_SCALE){payload.schemaVersion=SCHEMA_V2;payload.quantityScale=selectedScale;}
     validateRequest(payload);
     return{payload,excludedObservedInbound:totals.frozen,decisionScope:scope,capacityVerified:suppliers.every(row=>study.periods.every(period=>row.maxByPeriod[period]!=null)),distanceBasis:basis};
   }

@@ -20,6 +20,11 @@
   }
 
   const ICON_PATHS = Object.freeze({
+    "/command/analysis": '<path d="M4 3v17h17M8 16v-4M13 16V7M18 16V4"/>',
+    "/command/cost": '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 4 16 4 16 0V6M4 12v6c0 4 16 4 16 0v-6"/>',
+    "/command/carbon": '<path d="M20 3c-12 0-17 4-15 11 2 7 15 7 15-11ZM3 21 15 9"/>',
+    "/command/report": '<path d="M5 3h10l4 4v14H5V3Zm10 0v5h4M8 12h8M8 16h6"/>',
+
     "/design/overview": '<path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16"/>',
     "/design/facility-location": '<path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/>',
     "/design/network-scenarios": '<path d="M5 5v14m0-7h7a5 5 0 0 0 5-5V5m-5 7a5 5 0 0 1 5 5v2m-3-11 3-3 3 3m-6 8 3 3 3-3"/>',
@@ -53,14 +58,8 @@
 
   function routeButton(documentValue, navItem, model, locale) {
     const label = I18n.translate(navItem.labelKey, locale);
-    const parentRoutes = {
-      "/command/execution": "/command/mission-control",
-      "/command/plan-vs-actual": "/command/mission-control",
-      "/command/driver-simulator": "/command/mission-control",
-      "/command/recovery": "/command/alerts",
-    };
     const exact = navItem.path === model.activeRoute;
-    const active = exact || navItem.path === parentRoutes[model.activeRoute];
+    const active = exact;
     const button = node(documentValue, "button", `platform-nav-item${active ? " active" : ""}`);
     button.type = "button";
     button.dataset.platformRoute = navItem.path;
@@ -90,7 +89,7 @@
   function renderBusiness(options) {
     const { document: documentValue, target, model, locale } = options;
     const fragment = documentValue.createDocumentFragment();
-    const secondary=new Set(['/command/execution','/command/plan-vs-actual','/command/driver-simulator','/command/recovery']);
+    const secondary = new Set();
     model.businessGroups.forEach((group) => {
       if(!group.items.some(item=>!secondary.has(item.path)))return;
       const section = node(documentValue, "section", "platform-nav-group");

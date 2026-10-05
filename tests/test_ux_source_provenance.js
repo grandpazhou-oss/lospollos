@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict'),XLSX=require('../vendor/xlsx/xlsx.full.min.js'),Import=require('../supply-chain-import-v19.js'),Intake=require('../platform-import-session-v19.js').tabularIntake;
+const headers=['编号','customerNumber','客户名称','经度','纬度','2026-10m3'];
+const book=XLSX.utils.book_new(),sheet=XLSX.utils.aoa_to_sheet([headers,['MANUAL','001','Manual',120,30,5],['CACHED','002','Cached',121,30,5],['NO_CACHE','003','Uncached',122,30,null]]);
+sheet.F3={t:'n',f:'2+3',v:5};sheet.F4={t:'n',f:'2+3'};XLSX.utils.book_append_sheet(book,sheet,'Formula source');
+const bytes=XLSX.write(book,{type:'buffer',bookType:'xlsx'}),wb=Import.inspectWorkbook(bytes,'SYNTHETIC-Formula.xlsx');
+assert.deepEqual(wb.sheets[0].rows[1].formulas,{});
+assert.deepEqual(wb.sheets[0].rows[2].formulas[6],{expression:'2+3',cached:true});
+assert.deepEqual(wb.sheets[0].rows[3].formulas[6],{expression:'2+3',cached:false});
+const profile=Intake.template(wb);assert.equal(profile.blocks[0].fields.customerNodeId,2);assert.equal(profile.blocks[0].fields.customerName,3);
+const uncached=Import.applyProfile(wb,profile);assert.equal(uncached.periodDemand.length,2);assert.ok(uncached.excludedRows.some(row=>row.rowNumber===4&&row.reasonCode==='PERIOD_VALUE_MISSING'));assert.ok(uncached.sourceRows.some(row=>row.rowNumber===4&&row.formulas?.[6]?.cached===false));
+const included=structuredClone(profile);included.blocks[0].excludeRows=[{rowNumber:4,reasonCode:'FORMULA_NO_CACHE_REVIEWED'}];
+const result=Import.applyProfile(wb,included);assert.equal(result.periodDemand.length,2);assert.deepEqual(result.periodDemand.map(row=>row.quantity),[5,5]);assert.equal(result.periodDemand[0].customerNodeId,'001');
+assert.ok(result.sourceRows.some(row=>row.formulas?.[6]?.expression==='2+3'&&row.formulas[6].cached));assert.ok(result.excludedRows.some(row=>row.rowNumber===4&&row.reasonCode==='FORMULA_NO_CACHE_REVIEWED'));
+const ambiguous=Import.inspectWorkbook(Buffer.from('编号,customerNumber,客户名称,customerName,2026-10m3\nD,001,Alpha,Beta,5'),'SYNTHETIC-Ambiguous.csv'),suggested=Intake.template(ambiguous).blocks[0];
+assert.equal(suggested.fields.customerName,undefined);assert.equal(suggested.suggestions.customerName.status,'AMBIGUOUS');assert.deepEqual(suggested.suggestions.customerName.columns,[3,4]);assert.equal(suggested.fields.customerNodeId,2);
+console.log(JSON.stringify({status:'PASS',method:'REAL_XLSX_SAVED_FORMULA_CACHE_NO_EXECUTION',vectors:['manual-value','saved-cache','uncached-rejected','explicit-exclusion-with-reason','source-formula-retained','001-id','ambiguous-heading-unassigned']}));

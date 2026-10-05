@@ -70,9 +70,9 @@
     let duplicateOrders = 0;
 
     function addOrderIssue(order, index, severity, category, field, message, suggestion, blocking) {
-      const row = index + 2;
+      const row = order?.source?.rowNumber || index + 2;
       const entityId = String(order?.id || order?.code || `Orders:${row}`);
-      results.push(issue(severity, category, "Orders", row, field, message, suggestion, entityId, blocking));
+      results.push(issue(severity, category, order?.source?.sheet || "Orders", row, field, message, suggestion, entityId, blocking));
       if (blocking) {
         const entry = blocked.get(index) || { row, entityId, order, reasons: [] };
         entry.reasons.push(message);
@@ -89,7 +89,7 @@
       ["count", "volume"].forEach((field) => {
         if (hasValue(order?.[field]) && !finite(order[field])) addOrderIssue(order, index, "Error", "字段格式", field, `${field} 必须是数字`, "修正为数字格式", true);
       });
-      if (hasValue(order?.weight) && !finite(order.weight)) addOrderIssue(order, index, "Warning", "可选字段格式", "weight", "weight 不是数字，本项目将忽略重量约束", "留空或修正为数字", false);
+      for (const field of ['weight', 'count', 'serviceMin']) if (hasValue(order?.[field]) && (!finite(order[field]) || number(order[field]) < 0)) addOrderIssue(order, index, "Error", "字段格式", field, `${field} 必须是非负数字，原值不会自动修改`, "核对原始数据后重新上传", true);
 
       const coord = normalizeCoordinate(order);
       if (coord.valid) coordinateComplete += 1;
@@ -204,7 +204,9 @@
     const orderCheck = validateOrders(raw?.orders || [], raw?.vehicles || []);
     const vehicleCheck = validateVehicles(raw?.vehicles || []);
     const depotCheck = validateDepot(raw?.depot);
-    const results = structural.concat(orderCheck.results, vehicleCheck.results, depotCheck.results, validateConstraints(raw?.constraints));
+    const constraintIssues = validateConstraints(raw?.constraints);
+    if (raw?.importAssumptions?.length && !raw.importAssumptionsConfirmed) structural.push(issue('Error', '缺省假设待确认', 'Workbook', '-', 'importAssumptions', '本文件有缺省参数，请核对下方假设后明确确认；物量、坐标和车辆容量不会填默认值', '确认列出的时间窗、服务时间及平均速度，或补充原文件', '', true));
+    const results = structural.concat(orderCheck.results, vehicleCheck.results, depotCheck.results, constraintIssues);
     const h = health(results);
     const totalOrders = raw?.orders?.length || 0;
     const blockedOrderRows = orderCheck.blocked.length;
@@ -221,7 +223,7 @@
       vehicleMasterErrors: vehicleCheck.invalidRows.size,
       usableVehicles: vehicleCheck.usableVehicles,
     };
-    const canApply = structural.length === 0 && depotCheck.valid && vehicleCheck.usableVehicles > 0 && plannableOrders > 0;
+    const canApply = structural.length === 0 && !constraintIssues.some(row => row.blocking) && depotCheck.valid && vehicleCheck.usableVehicles > 0 && plannableOrders > 0;
     return {
       valid: h.error === 0,
       canApply,
@@ -254,7 +256,7 @@
 
   function csvSafe(value) {
     let text = String(value ?? "");
-    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    if (typeof value === "string" && (/^[\s\uFEFF]*[=+\-@]/.test(text) || /^[\t\r]/.test(text))) text = `'${text}`;
     return `"${text.replace(/"/g, '""')}"`;
   }
 

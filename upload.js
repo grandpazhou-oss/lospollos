@@ -96,7 +96,9 @@
       <td>${esc(row.message)}</td><td>${esc(row.suggestion)}</td>
     </tr>`).join("");
     const blocked = batch.validation.blockedOrders?.length || 0;
-    return `${metricsHtml(batch)}${priorityHtml(batch)}
+    const assumptions = batch.data?.raw?.importAssumptions || [];
+    const assumptionPanel = assumptions.length ? `<details open class="import-assumptions"><summary>缺省假设 · ${assumptions.length} 项（不含物量、坐标或容量）</summary><ul>${assumptions.slice(0, 30).map(row => `<li>${esc(row.sheet)} ${esc(row.rowNumber ?? '')} · ${esc(row.field)} = ${esc(row.value)}</li>`).join('')}</ul>${assumptions.length > 30 ? `<p>完整 ${assumptions.length} 项保留在原始输入与研究审计中。</p>` : ''}<label><input type="checkbox" id="confirmImportAssumptions" ${batch.data.raw.importAssumptionsConfirmed ? 'checked' : ''}>我确认上述缺省参数仅作为本次测算假设</label></details>` : '';
+    return `${metricsHtml(batch)}${priorityHtml(batch)}${assumptionPanel}
       <div class="validation-summary"><div><b>数据健康度</b><strong>${health.score}%</strong></div><div><b>Error</b><strong>${health.error}</strong></div><div><b>Warning</b><strong>${health.warning}</strong></div><div><b>Passed</b><strong>${health.passed}</strong></div></div>
       <div class="mini-note">Error 可表示单行阻断；只要仓库、可用车辆和至少一条可规划订单完整，仍可应用批次。被阻断的 ${blocked} 条订单不会静默消失，会进入规划守恒与异常清单。</div>
       <div class="upload-actions" style="justify-content:flex-start"><button class="primary-btn" id="applyBatchBtn" ${batch.validation.canApply ? "" : "disabled"}>${batch.data?.__rawUpload ? "应用为规划输入" : "应用排程结果"}</button><button class="ghost-btn" id="downloadValidationCsv">下载校验明细 CSV</button></div>
@@ -146,6 +148,12 @@
       state.active = state.batches.find((batch) => batch.batch_id === row.dataset.batch) || state.active;
       renderUpload();
     }));
+    document.getElementById('confirmImportAssumptions')?.addEventListener('change', event => {
+      state.active.data.raw.importAssumptionsConfirmed = event.target.checked;
+      state.active.validation = window.STCTValidator.validateUploadData(state.active.data);
+      state.active.status = state.active.validation.canApply ? 'Preview' : 'Blocked';
+      renderUpload();
+    });
     document.getElementById("applyBatchBtn")?.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -166,6 +174,7 @@
     state.busy = true;
     notify(`正在解析 ${file.name}`);
     try {
+      window.STCTImportBudget.checkFileSize(file);
       const isExcel = /\.(xlsx|xls)$/i.test(file.name);
       if (isExcel && !window.XLSX) throw new Error("Excel 解析库未加载。请检查网络后重试，或上传 JSON。");
       const parser = window.STCTCore?.parseExcelFile || window.parseExcelFile;

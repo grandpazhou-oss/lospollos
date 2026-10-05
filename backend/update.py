@@ -51,7 +51,7 @@ def main():
         sys.executable, '-c', '''
 import pandas as pd, json, math, os
 import sys
-sys.path.insert(0, "''' + ROOT + '''")
+sys.path.insert(0, sys.argv[1])
 
 # Re-parse data using the optimizer's logic
 from delivery_optimizer import (
@@ -59,9 +59,7 @@ from delivery_optimizer import (
     optimize_day, time_to_min, WORK_START, WORK_END, LUNCH_START, LUNCH_END
 )
 
-INPUT = "''' + xls_path + '''"
-OUTPUT = "''' + os.path.join(ROOT, 'route_data.json') + '''"
-COMPACT = "''' + os.path.join(ROOT, 'route_data_compact.json') + '''"
+INPUT, OUTPUT, COMPACT = sys.argv[2:5]
 
 parcels = parse_parcel_data(INPUT)
 customers = parse_customer_master(INPUT)
@@ -125,7 +123,7 @@ with open(COMPACT, 'w', encoding='utf-8') as f:
 
 dates_count = len(routes_by_date)
 print(f"OK: {dates_count}天, {total_routes}路线, depot={depot['name']}")
-'''], capture_output=True, text=True, timeout=120)
+''', ROOT, xls_path, os.path.join(ROOT, 'route_data.json'), os.path.join(ROOT, 'route_data_compact.json')], capture_output=True, text=True, timeout=120, check=True)
 
     print(result.stdout)
     if result.stderr:
@@ -133,7 +131,7 @@ print(f"OK: {dates_count}天, {total_routes}路线, depot={depot['name']}")
 
     # Step 3: Rebuild dashboard HTML
     print("\n[3/3] ダッシュボードHTMLを生成中...")
-    result = subprocess.run([sys.executable, BUILDER], capture_output=True, text=True, timeout=60)
+    result = subprocess.run([sys.executable, BUILDER], capture_output=True, text=True, timeout=60, check=True)
     print(result.stdout)
     if result.stderr:
         print("STDERR:", result.stderr[:500])

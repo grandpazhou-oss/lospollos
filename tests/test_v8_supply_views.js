@@ -45,15 +45,18 @@ assert.match(demand, /data-design-action="supply-demand-10"/);
 assert.match(demand, /不是派车订单/);
 const network = Views.render(state, '/design/network-scenarios');
 assert.match(network, /COSTLY-B/);
-assert.match(network, /COMPARABLE_OPERATING_COST/);
+assert.match(network, /可比运营成本/);
+assert.equal(snapshot.decision.rankingMetric, 'COMPARABLE_OPERATING_COST');
+assert.match(Views.render(state, '/design/network-scenarios', 'en'), /Comparable operating cost/);
+assert.match(Views.render(state, '/design/network-scenarios', 'ja'), /比較可能な運営費/);
 assert.throws(() => Views.render({ ...state, snapshot: { ...snapshot, decision: { ...snapshot.decision, rankedScenarioIds: ['COSTLY-B', 'COSTLY-B'] } } }, '/design/network-scenarios'), { code: 'SUPPLY_RANKING_ID_CONFLICT' });
 
 const noRates = Design.createStudy({ ...raw, studyId: 'V8-NO-RATES', rates: [] });
 const noRatesBaseline = Design.evaluatePortfolio(noRates, { type: 'OBSERVED_BASELINE', distanceBasis: 'VERIFIED_ROAD' });
 const noRatesSnapshot = Report.createSnapshot(noRates, noRatesBaseline, [result(noRates, 'DISTANCE-B', 'B')], [], { ...config, objective: 'VOLUME_KM' });
 const unknown = Views.render({ study: noRates, snapshot: noRatesSnapshot, status: 'SNAPSHOT_READY' }, '/design/cost-to-serve');
-assert.match(unknown, /data-v8-cost-amount="reference" data-value="" data-status="UNKNOWN">UNKNOWN/);
-assert.match(unknown, /UNKNOWN · 适用费率/);
+assert.match(unknown, /data-v8-cost-amount="reference" data-value="" data-status="UNKNOWN">未知/);
+assert.match(unknown, /适用费率或费用范围尚不完整/);
 
 const stale = Views.render({ ...state, staleResult: { reason: 'STUDY_INPUT_CHANGED' } }, '/design/cost-to-serve');
 assert.match(stale, /旧结果不能作为当前结论/);
@@ -61,13 +64,13 @@ assert.match(stale, /data-v8-cost-amount="candidate" data-value="" data-status="
 
 const joint = { schemaVersion: 'stct-supply-chain-v5-snapshot-v1', studyHash: study.inputHash, analysisScope: 'FULL_CHAIN', planningReference: { metrics: { operatingCost: 900, costParts: { inboundTransport: 500, outboundTransport: 400 } } }, rows: [{ scenarioId: 'JOINT-1', status: 'OPTIMAL', metrics: { operatingCost: 800, firstPeriodCost: 180, costParts: { inboundTransport: 300, outboundTransport: 500 } } }], decision: { focusScenarioId: 'JOINT-1', rankedScenarioIds: ['JOINT-1'], rankingMetric: 'COMPARABLE_OPERATING_COST', reference: 'SAME_CONDITION_PLANNING_REFERENCE' } };
 const jointCost = Views.render({ study, snapshot: joint, status: 'SNAPSHOT_READY' }, '/design/cost-to-serve');
-assert.match(jointCost, /SAME_CONDITION_PLANNING_REFERENCE/);
+assert.match(jointCost, /同条件规划参照/);
 assert.match(jointCost, /data-v8-cost-amount="reference" data-value="900"/);
 assert.match(jointCost, /data-v8-cost-amount="candidate" data-value="800"/);
 
 const upstream = { ...joint, analysisScope: 'UPSTREAM_ONLY', observedKnownInbound: { cost: 500 }, planningReference: null, rows: [{ ...joint.rows[0], metrics: { ...joint.rows[0].metrics, operatingCost: 400 } }], decision: { ...joint.decision, reference: 'OBSERVED_BASELINE' } };
 const upstreamCost = Views.render({ study, snapshot: upstream, status: 'SNAPSHOT_READY' }, '/design/cost-to-serve');
-assert.match(upstreamCost, /OBSERVED_KNOWN_INBOUND/);
+assert.match(upstreamCost, /已知观察入库/);
 assert.match(upstreamCost, /data-v8-cost-amount="reference" data-value="500"/);
 assert.match(upstreamCost, /data-v8-cost-amount="candidate" data-value="400"/);
 assert.throws(() => Views.render(state, '/command/dispatch'), { code: 'SUPPLY_VIEW_ROUTE_UNSUPPORTED' });

@@ -1,0 +1,15 @@
+
+'use strict';
+const assert=require('node:assert/strict'),Contract=require('../network-contract-v18.js'),Design=require('../supply-chain-design-v19.js'),Controller=require('../supply-chain-controller-v19.js'),View=require('../supply-chain-view-v19.js');
+const records=new Map(),repository={record:(id,payload)=>({id,payload,contentHash:Contract.hashArtifact(payload)}),async read(store,id){return id===undefined?[]:records.get(`${store}:${id}`)||null;},async commit({records:items,pointer,expectedRevision}){const old=records.get(`pointers:${pointer.id}`);assert.equal(old?.revision||0,expectedRevision);for(const[store,rows]of Object.entries(items))for(const row of rows)records.set(`${store}:${row.id}`,row);const saved={...pointer,revision:expectedRevision+1};records.set(`pointers:${pointer.id}`,saved);return{pointer:saved};}};
+const study=Design.createStudy({studyId:'MATRIX-ALIAS-TEST',classification:'SYNTHETIC',coordinateUse:'ASSUMED_WGS84_SCREENING',nodes:[{nodeId:'W',name:'Shared',role:'DC',coordinate:[120,30]},{nodeId:'F',name:'Shared',role:'FACTORY',coordinate:[121,30]},{nodeId:'C',name:'Alpha',role:'CUSTOMER',coordinate:[120.5,30]}],periodDemand:[{demandId:'D',customerNodeId:'C',currentSiteId:'W',period:'2026-10',quantity:.25,unit:'m3'}]});
+(async()=>{
+ const controller=Controller.createController({repository,fetch:async()=>({ok:true,json:async()=>({available:true})})}),view=View.createView({download(){}});view.setController(controller);controller.loadStudy(study);view.hydrateFromController();
+ const before=controller.snapshot().study.inputHash,bytes=Buffer.from('title\n起点,终点,距离km,质量,来源,单位\nShared,Alpha,1500,估算道路,SYNTHETIC,m');
+ await view.onChange({target:{dataset:{supplyFile:'matrix'},files:[{name:'matrix.csv',arrayBuffer:async()=>bytes}]}});
+ assert.equal(controller.snapshot().study.inputHash,before);let html=view.render(controller.snapshot(),'zh');assert.match(html,/Shared · 仓库 · W/);assert.match(html,/Shared · 工厂 · F/);
+ view.onInput({target:{dataset:{supplyField:'matrixChoice'},value:'UNRELATED'}});await view.action('matrix-resolve');assert.equal(controller.snapshot().study.inputHash,before);
+ view.onInput({target:{dataset:{supplyField:'matrixChoice'},value:'W'}});await view.action('matrix-resolve');await view.action('matrix-confirm');
+ const row=controller.snapshot().study.distanceRows[0];assert.equal(row.fromNodeId,'W');assert.equal(row.toNodeId,'C');assert.equal(row.distanceKm,1.5);assert.equal(row.quality,'ESTIMATED_ROAD');assert.equal(row.sourceRow.fromValue,'Shared');assert.deepEqual(row.sourceRow.confirmedNodeIds,{from:'W',to:'C'});assert.equal(controller.snapshot().study.periodDemand[0].quantity,.25);assert.equal(controller.snapshot().snapshot,null);
+ console.log(JSON.stringify({status:'PASS',method:'SYNTHETIC_CSV_AND_VIEW_CONTROLLER_CONTRACT_NOT_BROWSER',vectors:['same-name-different-role','explicit-selection-only','reject-unrelated-id','directed-relationship','metre-conversion','quality-preserved','source-trace','quantity-unchanged']}));
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import io
+import json
+import base64
+import os
+import sys
+import traceback
+import re
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException
+from starlette.concurrency import run_in_threadpool
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from public_resources import public_file
 import openpyxl
 
 from engine import run, DispatchConfig, VehicleType
@@ -23,7 +33,7 @@ app = FastAPI(title="Dispatch Engine")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -267,77 +277,118 @@ async def health():
 
 @app.post("/api/upload-dispatch")
 async def upload_dispatch(file: UploadFile = File(...)):
-    """接收日文格式 .xls 文件，运行优化引擎，返回 route_data.js"""
-    if not file.filename.endswith(('.xls', '.xlsx')):
+    """Retained local legacy upload. Client names are labels, never storage paths."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".xls", ".xlsx"):
         return JSONResponse({"success": False, "error": "仅支持 .xls / .xlsx 格式"}, status_code=400)
-
     if not OPTIMIZER_SCRIPT.exists():
-        return JSONResponse({"success": False, "error": f"优化脚本未找到: {OPTIMIZER_SCRIPT}"}, status_code=500)
-
+        return JSONResponse({"success": False, "error": "本地优化脚本不可用"}, status_code=500)
     try:
-        content = await file.read()
-
-        # 保存到临时目录
-        tmpdir = tempfile.mkdtemp(prefix='dispatch_')
-        tmp_xls = os.path.join(tmpdir, file.filename)
-        with open(tmp_xls, 'wb') as f:
-            f.write(content)
-
-        output_dir = str(OPTIMIZER_SCRIPT.parent)
-
-        # 运行优化引擎
-        result = subprocess.run(
-            ['python3', str(OPTIMIZER_SCRIPT), tmp_xls, output_dir],
-            capture_output=True, text=True, timeout=300
-        )
-
-        # 读取生成的 route_data.js
-        js_path = os.path.join(output_dir, 'route_data.js')
-        if not os.path.exists(js_path):
-            return JSONResponse({
-                "success": False,
-                "error": "优化完成但未生成数据文件",
-                "stdout": result.stdout[-2000:],
-                "stderr": result.stderr[-500:],
-            })
-
-        with open(js_path, 'r', encoding='utf-8') as f:
-            js_content = f.read()
-
-        # 清理
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-        return {
-            "success": True,
-            "filename": file.filename,
-            "dataSize": len(js_content),
-            "stdout": result.stdout[-500:],
-        }
-
+        content = await file.read(8 * 1024 * 1024 + 1)
+        if len(content) > 8 * 1024 * 1024:
+            return JSONResponse({"success": False, "error": "文件超过 8 MiB，请缩小本次分析范围"}, status_code=413)
+        with tempfile.TemporaryDirectory(prefix="dispatch_") as directory:
+            tmp_xls = Path(directory) / ("input" + suffix)
+            tmp_xls.write_bytes(content)
+            result = await run_in_threadpool(subprocess.run,
+                [sys.executable, str(OPTIMIZER_SCRIPT), str(tmp_xls), directory],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+            if result.returncode != 0:
+                return JSONResponse({"success": False, "error": "优化失败，现有数据未改变", "stdout": result.stdout[-2000:], "stderr": result.stderr[-500:]}, status_code=422)
+            js_path, json_path = Path(directory) / "route_data.js", Path(directory) / "route_data.json"
+            if not js_path.is_file() or not json_path.is_file():
+                return JSONResponse({"success": False, "error": "优化未生成完整数据，现有数据未改变"}, status_code=500)
+            js_content = js_path.read_text(encoding="utf-8")
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or not isinstance(payload.get("routes_by_date"), dict):
+                raise ValueError("优化结果结构不完整")
+            excel_path = Path(directory) / "delivery_plan.xlsx"
+            if not excel_path.is_file():
+                return JSONResponse({"success": False, "error": "优化未生成完整工作簿，现有数据未改变"}, status_code=500)
+            bundle = {"routeData": payload, "workbook": base64.b64encode(excel_path.read_bytes()).decode("ascii")}
+            # Commit the entire result atomically; failure keeps the previous viewer and export together.
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=OPTIMIZER_SCRIPT.parent, prefix="legacy-result-", suffix=".tmp", delete=False) as staged:
+                json.dump(bundle, staged, ensure_ascii=False)
+            try:
+                os.replace(staged.name, OPTIMIZER_SCRIPT.parent / "legacy-current.json")
+            finally:
+                Path(staged.name).unlink(missing_ok=True)
+            return {"success": True, "filename": file.filename, "dataSize": len(js_content.encode("utf-8")), "stdout": result.stdout[-500:]}
     except subprocess.TimeoutExpired:
-        return JSONResponse({"success": False, "error": "优化超时（5分钟）"}, status_code=500)
-    except Exception as e:
+        return JSONResponse({"success": False, "error": "优化超时（5分钟），现有数据未改变"}, status_code=504)
+    except Exception:
         traceback.print_exc()
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        return JSONResponse({"success": False, "error": "上传或计算失败，现有数据未改变；请核对文件格式后重试"}, status_code=500)
+
+
+def current_legacy_result():
+    current = OPTIMIZER_SCRIPT.parent / "legacy-current.json"
+    if current.is_file():
+        return json.loads(current.read_text(encoding="utf-8"))
+    # Read-only compatibility with existing CLI output; never promote a failed upload.
+    source = OPTIMIZER_SCRIPT.parent / "route_data.json"
+    if not source.is_file():
+        raise FileNotFoundError()
+    workbook = OPTIMIZER_SCRIPT.parent / "delivery_plan.xlsx"
+    return {"routeData": json.loads(source.read_text(encoding="utf-8")), "workbook": base64.b64encode(workbook.read_bytes()).decode("ascii") if workbook.is_file() else None}
+
+
+@app.get("/api/legacy-route-data")
+async def legacy_route_data():
+    """Explicit loopback viewer API. This tool has no production authentication."""
+    try:
+        return JSONResponse(current_legacy_result()["routeData"])
+    except (ValueError, OSError, KeyError):
+        return JSONResponse({"error": "旧版运输结果无法读取，请先上传运输工作簿"}, status_code=404)
+
+
+@app.get("/api/legacy-export")
+async def legacy_export(format: str = "json"):
+    try:
+        bundle = current_legacy_result()
+        if format == "xlsx" and bundle.get("workbook"):
+            content, name, mime = base64.b64decode(bundle["workbook"]), "delivery_plan.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        elif format in ("json", "js"):
+            content = json.dumps(bundle["routeData"], ensure_ascii=False)
+            if format == "js": content = "var ROUTE_DATA = " + content + ";\n"
+            name, mime = "route_data." + format, "application/json" if format == "json" else "text/javascript"
+        else:
+            return JSONResponse({"error": "所选导出格式不可用"}, status_code=400)
+        return Response(content, media_type=mime, headers={"Content-Disposition": 'attachment; filename="' + name + '"'})
+    except (ValueError, OSError, KeyError):
+        return JSONResponse({"error": "尚无可导出的完整运输结果"}, status_code=404)
 
 
 @app.get("/api/data-status")
 async def data_status():
-    """返回当前 route_data.js 状态"""
-    js_path = OPTIMIZER_SCRIPT.parent / "route_data.js"
-    excel_path = OPTIMIZER_SCRIPT.parent / "delivery_plan.xlsx"
-    return {
-        "hasData": js_path.exists(),
-        "dataSize": js_path.stat().st_size if js_path.exists() else 0,
-        "hasExcel": excel_path.exists(),
-        "excelSize": excel_path.stat().st_size if excel_path.exists() else 0,
-    }
+    try:
+        bundle = current_legacy_result()
+        return {"hasData": True, "dataSize": len(json.dumps(bundle["routeData"], ensure_ascii=False).encode("utf-8")), "hasExcel": bool(bundle.get("workbook")), "excelSize": len(base64.b64decode(bundle["workbook"])) if bundle.get("workbook") else 0}
+    except (ValueError, OSError, KeyError):
+        return {"hasData": False, "dataSize": 0, "hasExcel": False, "excelSize": 0}
 
 
-# Serve static files in production
+# Retained legacy server is local single-user tooling, not production authentication.
+class PublicStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        target = public_file("/" + path)
+        if target is None:
+            raise HTTPException(status_code=404)
+        return await super().get_response(target.relative_to(ROOT).as_posix(), scope)
+
+
+@app.middleware("http")
+async def local_origin_only(request, call_next):
+    origin = request.headers.get("origin")
+    if origin and not re.fullmatch(r"https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?", origin):
+        return JSONResponse({"error": "仅支持本机页面调用"}, status_code=403)
+    return await call_next(request)
+
+
+# Public assets only
 ROOT = Path(__file__).resolve().parent.parent
 if (ROOT / "index.html").exists():
-    app.mount("/", StaticFiles(directory=str(ROOT), html=True), name="static")
+    app.mount("/", PublicStaticFiles(directory=str(ROOT), html=True), name="static")
 
 
 if __name__ == "__main__":
@@ -351,4 +402,4 @@ if __name__ == "__main__":
     print(f"  状态API:  GET  http://localhost:{port}/api/data-status")
     print(f"  按 Ctrl+C 停止")
     print(f"{'='*60}\n")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="127.0.0.1", port=port)
