@@ -26,36 +26,54 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.16.0'
-      - name: Apply audited bytes only to unchanged source files
+      - name: Apply audited bytes to the reconciled source baseline
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, subprocess, urllib.request, zlib
-          base = '8a006606f4b181039ee4384d65782d32b330f32d'
+          base = 'af60a6e30a1a216591ab9101a02d80c17ac1481d'
           paths = ['.gitattributes','README.md','CURRENT_STATE.md','BUILD_IDENTITY.md','config.js','local-road-client-v86.js','optimizer/ortools_service.py','optimizer/supply_chain_jobs_v6.py','optimizer/build-manifest.json','optimizer/build_identity.py','optimizer/solve_admission.py','scripts/local_trial.py','scripts/update_build_identity.py','scripts/run_enterprise_checks.py','supply-chain-controller-v19.js','tests/t_f19_revision_adoption.js','tests/test_backend_build_fingerprint.py','tests/test_enterprise_admission.py','tests/test_enterprise_hardening.js','tests/test_enterprise_indexeddb.py']
-          subprocess.run(['git','diff','--exit-code',base,'HEAD','--',*paths],check=True)
+          final_paths = paths + ['tests/test_supply_chain_v71_health.js']
+          subprocess.run(['git','diff','--exit-code',base,'HEAD','--',*final_paths],check=True)
           parts = ['df6b24590a5e8bf96d5c10ae086385b98e8a64aa','42a05fd383b39a5269a9509711ce660f055284d3','bb66d2a1cde9c2fde25af62c99d8aa6be368403e','e0832d1c4f0b61f7fd19008a3b909411d4464a4d','bc3c651e51c5ac12a88299bcaad17fabc74e7705','e062bcaab0acbc5f81efeb4cca609c5469ae7d31','a69c675a4e86a272fc5fb07f23e28fe6852e14ba']
           compressed = b''
           for sha in parts:
               req = urllib.request.Request('https://api.github.com/repos/grandpazhou-oss/lospollos/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req,timeout=30) as response:
-                  blob = json.load(response)
+              with urllib.request.urlopen(req,timeout=30) as response: blob = json.load(response)
               data = base64.b64decode(blob['content'])
               assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest() == sha
               compressed += data
           patch = zlib.decompress(compressed)
           assert len(patch) == 69628
           assert hashlib.sha256(patch).hexdigest() == 'd5f0abff8213c00158b4dee7160da778a1c1ed00696cae26a20dad126cf47079'
-          changed = [line[6:] for line in patch.decode('utf-8').splitlines() if line.startswith('+++ b/')]
-          assert set(changed) == set(paths)
-          path = pathlib.Path(os.environ['RUNNER_TEMP'])/'enterprise-hardening.patch'
-          path.write_bytes(patch)
-          subprocess.run(['git','apply','--unidiff-zero','--check',str(path)],check=True)
-          subprocess.run(['git','apply','--unidiff-zero',str(path)],check=True)
+          assert {line[6:] for line in patch.decode('utf-8').splitlines() if line.startswith('+++ b/')} == set(paths)
+          patch_path = pathlib.Path(os.environ['RUNNER_TEMP'])/'enterprise-hardening.patch'
+          patch_path.write_bytes(patch)
+          # Preserve the three already-verified frontend files; reconcile only the missing deltas.
+          flags=['--unidiff-zero','--exclude=config.js','--exclude=local-road-client-v86.js','--exclude=supply-chain-controller-v19.js']
+          subprocess.run(['git','apply',*flags,'--check',str(patch_path)],check=True)
+          subprocess.run(['git','apply',*flags,str(patch_path)],check=True)
+          def replace(path,old,new):
+              p=pathlib.Path(path); text=p.read_text(encoding='utf-8')
+              assert text.count(old)==1, (path,'unexpected base text')
+              p.write_text(text.replace(old,new),encoding='utf-8')
+          replace('local-road-client-v86.js','  return Object.freeze({settings,route,matrix,reuseAssessment});','''  function reusable(row,study,options={}){
+              if(!row||!study||!Array.isArray(study.nodes))return false;
+              const from=study.nodes.find(node=>node.nodeId===row.fromNodeId)?.coordinate;
+              const to=study.nodes.find(node=>node.nodeId===row.toNodeId)?.coordinate;
+              return reuseAssessment(row,from,to,study.coordinateUse,options,options.now??Date.now()).reusable;
+            }
+            return Object.freeze({settings,route,matrix,reuseAssessment,reusable});''')
+          replace('supply-chain-controller-v19.js',"study.distanceRows.filter(r=>['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)&&r.distanceKm!=null).map","study.distanceRows.filter(r=>['VERIFIED_ROAD','ESTIMATED_ROAD'].includes(r.quality)&&r.distanceKm!=null&&(r.source!=='OSRM_LOCAL'||Road.reusable(r,study,{...globalThis.STCT_CONFIG,...options.roadConfig}))).map")
+          replace('tests/test_supply_chain_v71_health.js','C.createController({endpoint,expectedBuildFingerprint,fetch:',"C.createController({endpoint,buildPolicy:'COMPATIBLE_WARN',expectedBuildFingerprint,fetch:")
+          p=pathlib.Path('tests/test_enterprise_hardening.js');s=p.read_text();assert s.count("'BUILD_PIN_REQUIRED'")==2 and s.count("'BUILD_PIN_MISMATCH'")==1;p.write_text(s.replace("'BUILD_PIN_REQUIRED'","'EXPECTED_BUILD_FINGERPRINT_REQUIRED'").replace("'BUILD_PIN_MISMATCH'","'BUILD_FINGERPRINT_MISMATCH'"))
+          replace('scripts/run_enterprise_checks.py',"    'test_enterprise_hardening.js', 'test_supply_chain_v71_health.js',","    'test_enterprise_hardening_v1.cjs', 'test_enterprise_hardening.js', 'test_supply_chain_v71_health.js',")
+          replace('CURRENT_STATE.md','  development option. The standalone controller API keeps its legacy warning-mode\n  fallback when no configuration is supplied; that API is not an authorization boundary.','  development option. The standalone controller also defaults to STRICT_PINNED;\n  missing configuration never enables warning mode implicitly. Neither mode is authentication.')
+          subprocess.run(['python3','scripts/update_build_identity.py'],check=True)
           subprocess.run(['git','diff','--check'],check=True)
-          (pathlib.Path(os.environ['RUNNER_TEMP'])/'hardening-paths.json').write_text(json.dumps(paths))
-          print('Verified patch applied to',len(paths),'explicitly allowed files')
+          (pathlib.Path(os.environ['RUNNER_TEMP'])/'hardening-paths.json').write_text(json.dumps(final_paths))
+          print('Verified patch integrated into',len(final_paths),'explicitly allowed files')
           PY
       - name: Core synthetic regression
         run: python3 scripts/run_enterprise_checks.py --mode core --output "$RUNNER_TEMP/evidence/core"
@@ -69,7 +87,7 @@ jobs:
         env:
           STCT_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/evidence/browser
         run: python3 scripts/run_enterprise_checks.py --mode browser --output "$RUNNER_TEMP/evidence/browser"
-      - name: Commit only verified source changes, never merge or force push
+      - name: Commit verified source changes without merge or force push
         run: |
           python3 - <<'PY'
           import json, os, pathlib, subprocess
@@ -82,7 +100,7 @@ jobs:
           assert set(actual)==set(paths)
           subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
           subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
-          subprocess.run(['git','commit','-m','fix: harden study saves, build admission, solver concurrency and road provenance'],check=True)
+          subprocess.run(['git','commit','-m','fix: integrate runtime manifest, shared solver admission and regression gates'],check=True)
           subprocess.run(['git','push','origin','HEAD:refs/heads/'+branch],check=True)
           print('PUSHED_COMMIT='+subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
           PY
