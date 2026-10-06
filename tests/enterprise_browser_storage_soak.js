@@ -46,6 +46,16 @@
     return {historyRecords: records.length, auditRecords: audits.length};
   }
   window.enterpriseStorageSoak = {
+    async bounded(method, argument, timeoutMs = 15000) {
+      let timer;
+      try {
+        return await Promise.race([
+          Promise.resolve().then(() => window.enterpriseStorageSoak[method](argument)),
+          new Promise((_, reject) => { timer = setTimeout(() =>
+            reject(Error('COMPONENT_OPERATION_TIMEOUT:' + method)), timeoutMs); })
+        ]);
+      } finally { clearTimeout(timer); }
+    },
     async init(name) {
       check(!repos.length, 'Component initialized twice');
       repo = ns.platformRepository.createRepository({name});

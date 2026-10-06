@@ -38,7 +38,13 @@ Configuration:
 - `--storage-cycles`: 1–1000; qualifying soak requires at least 300
 - `--native-every`: repeat controlled busy rejection + real native retry at this UI interval
 - `--sample-seconds`: .25–5 seconds, default 1
-- `--max-rss-mib` / `--max-fds`: can tighten, never exceed the 1024 MiB / 1024 FD budgets
+- `--memory-profile`: `standard-1gib` (default, 1024 MiB) or explicit `hosted-2gib`
+  (2048 MiB, independent hosted-runner qualification only)
+- `--max-rss-mib`: optional tighter RSS limit within the selected profile; it cannot
+  enlarge the default profile. `--max-fds` remains capped at 1024 in both profiles
+- `--max-wall-seconds`: independent worker wall-clock limit, default 180 seconds for
+  smoke or requested duration + 120 seconds otherwise; includes setup, unlike the
+  sustained operating-window clock. Deadline always fails, never skips assertions
 - `--smoke`: permits short configurations; `soakQualification` remains `NOT_QUALIFIED_SHORT_RUN`
 
 The evidence directory must be fresh, empty and outside the checkout. An existing
@@ -109,21 +115,42 @@ coverage. Final hard assertions require all configured cycles and minimum covera
 
 ## Resource budget and interpretation
 
-Linux `/proc` is required. Once per second, the suite samples its own Python PID,
-Playwright/browser descendants and verified production-launcher service PIDs and
+Linux `/proc` is required. Once per second, the suite samples its supervisor and
+worker Python PIDs, Playwright/browser descendants and verified production-launcher service PIDs and
 all their descendants. PID start times guard identity. Metrics include aggregate
 and per-process RSS, browser RSS, file descriptor count, thread count, process count,
-baseline/last/peak/delta and linear trend. Summed RSS conservatively double-counts
+baseline/last/peak/delta and linear trend. Samples and trends separate Chrome, owned
+services/native workers, Playwright driver, and Python/test harness processes. The
+launcher receipts identify service roots; process names do not authorize cleanup.
+Before the sustained window, a ten-second idle observation records multiple actual
+samples, medians, minimum/maximum/range, standard deviation and variation relative
+to median. No GC is injected, no test action mutates the app in that idle interval,
+and no resource limit is adjusted to fit observed usage. Summed RSS conservatively double-counts
 shared pages, and includes the test driver/instrumentation. It is not PSS.
 
-The suite stops on >1 GiB aggregate RSS, >1024 aggregate FDs, >3 tabs, an unhandled
+The suite stops above its explicitly named aggregate RSS budget (default 1 GiB,
+independent `hosted-2gib` 2 GiB), >1024 aggregate FDs, >3 tabs, an unhandled
 browser error, inconsistent data, false success, or a missing required check.
 If the isolated warm-up/baseline already exceeds the budget, it reports
 `BLOCKED_ENVIRONMENT` / `NOT_RUN_RESOURCE_BASELINE_BLOCKED`, without relaxing it.
 After the soak starts, a resource-bound violation is `FAIL`. The sampling thread
-interrupts only this test's main thread to run owned cleanup; it never signals
-another process by name or port. SIGTERM is handled as an interrupted failure with
-owned-service cleanup and retained evidence. SIGKILL cannot be handled.
+publishes an atomic abort marker and never injects an asynchronous exception into
+Playwright's synchronous dispatcher. SIGTERM on the worker sets a cooperative stop
+flag. An independent test-specific supervisor observes the marker and bounds the
+whole process even if a browser promise or cleanup stalls. It first requests graceful
+worker shutdown, calls the launcher's identity-checked stop independently of
+Playwright, then signals only this invocation's previously observed descendant
+PID/start-time identities if still necessary. No process-name or port matching is
+used. Each grace wait is at most 10 seconds; service stop is bounded at 40 seconds,
+and a last owned-process wait at 5 seconds. Deadline and forced cleanup are recorded
+as failure, with the original last stage and profile retained. Normal child exit also checks every recorded owned PID/start-time
+identity for surviving live processes. An unexpected live remainder fails the run
+even if subsequent cleanup succeeds. pidfd signaling is used where available, with
+a start-time recheck after opening the descriptor. After termination, a bounded
+wait and final live/zombie process report establish the actual result; sending
+SIGKILL alone is not treated as proof of cleanup. Zombies are reported separately
+as non-running processes. A directly delivered
+SIGKILL cannot be handled by the process receiving it.
 
 Normal immutable history intentionally grows. For N component cycles, exactly
 N+1 small immutable study records and N+1 audit records, one pointer and zero
@@ -135,6 +162,32 @@ retries also add expected snapshots. No archive is created without a configured
 bound, no database is filled to force quota exhaustion, and observed history/disk
 growth is not automatically called a memory leak. Conversely a finite bounded run
 is never labeled proof of absence of leaks.
+
+
+## Original 1 GiB evidence and independent hosted profile
+
+The immutable earlier artifact `ci-bd9c019/preflight/browser` (GitHub artifact
+`enterprise-soak-preflight/browser/resources.jsonl`) records at 2.196 seconds:
+aggregate owned-process RSS **1,093,218,304 bytes**, against **1,073,741,824 bytes**;
+Chrome-only RSS was **747,298,816 bytes**. No complete public-UI or component-soak
+cycle had run. The resource interruption then exposed the old harness's synchronous
+Playwright-dispatcher hang, leaving its old summary at `RUNNING` without cleanup.
+That artifact remains unchanged. It establishes an initial aggregate-budget block
+and a harness shutdown bug, not Chrome alone exceeding 1 GiB and not an application
+memory leak.
+
+An explicitly approved, separately named hosted calibration run uses:
+
+```sh
+python -B tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib \
+  --duration-seconds 720 --evidence-dir /tmp/fresh-browser-soak-hosted-2gib
+```
+
+The same flag can be appended to the short smoke command. Summary records the exact
+profile, effective ceiling, calibration reason and reference to the original 1 GiB
+artifact. It does not rewrite or reclassify that original evidence, change a product
+memory guarantee, increase concurrency, change the runner, or relax FD/tab limits.
+A pass in `hosted-2gib` is evidence for that explicitly named profile only.
 
 ## Evidence, status and cleanup
 
@@ -149,6 +202,14 @@ is never labeled proof of absence of leaks.
 - On an application/invariant/resource failure after startup, the closed synthetic
   browser profile is moved into the external evidence directory for reproduction
   when possible; there is no continuous trace to inflate instrumentation overhead
+
+The component's init, cycle and final history Promise each have a 15-second
+deadline, in addition to the 5-second two-writer barrier limit and independent
+process watchdog. A timeout fails with its operation name. Stage starts are printed
+and flushed immediately to CI stdout, and failure summary is written before
+Playwright cleanup. This makes preflight stalls inspectable without waiting for
+normal completion or artifact upload. The persistent context keeps a live owned
+page while replacing its initial blank page.
 
 Start/end source identities must match; an edit during execution invalidates the
 run rather than attaching evidence to a different source. Prior evidence is never

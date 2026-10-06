@@ -16,12 +16,14 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import subprocess
+import tempfile
 import sys
 import time
 import uuid
 from urllib.parse import urlsplit
 
-from enterprise_browser_soak_support import EvidenceLog, ResourceMonitor, source_identity
+from enterprise_browser_soak_support import EvidenceLog, ResourceMonitor, source_identity, supervise_process, SoakDeadlineError, process_table
 from test_enterprise_storage_native import MODULES
 from test_enterprise_synthetic_full_ui import (
     ROOT, TOTAL, action, field, login, near, reveal, state, step, upload, wait_state,
@@ -29,19 +31,36 @@ from test_enterprise_synthetic_full_ui import (
 from test_enterprise_ui_faults import FaultSuite
 
 
+MEMORY_PROFILES = {'standard-1gib': 1024, 'hosted-2gib': 2048}
+PRIOR_1GIB_EVIDENCE = {
+    'checkout': 'bd9c019', 'artifact': 'enterprise-soak-preflight/browser/resources.jsonl',
+    'archiveReference': 'ci-bd9c019/preflight/browser', 'elapsedSeconds': 2.196,
+    'aggregateRSSBytes': 1093218304, 'browserRSSBytes': 747298816, 'limitBytes': 1073741824,
+    'uiCycles': 0, 'componentCycles': 0,
+    'conclusion': 'INITIAL_AGGREGATE_BUDGET_BLOCK_AND_OLD_HARNESS_INTERRUPT_HANG; '
+                  'NOT_BROWSER_ALONE_ABOVE_1GIB_AND_NOT_APPLICATION_LEAK_EVIDENCE'}
+
+
 class BrowserSoakSuite(FaultSuite):
     def __init__(self, evidence, args):
         super().__init__(evidence)
+        owned_runtime = os.environ.get('STCT_SOAK_OWNED_RUNTIME')
+        if os.environ.get('STCT_SOAK_WORKER') == '1' and owned_runtime:
+            shutil.rmtree(self.runtime)  # This constructor's still-empty temporary directory.
+            self.runtime = Path(owned_runtime)
+            self.run_dir = self.runtime / 'launcher'
+            self.env['STCT_RUN_DIR'] = str(self.run_dir)
         self.args = args
         self.events = EvidenceLog(evidence / 'cycles.jsonl', self.scrub)
         self.monitor = ResourceMonitor(EvidenceLog(evidence / 'resources.jsonl', self.scrub),
-                                       args.max_rss_mib, args.max_fds, args.sample_seconds)
+                                       args.max_rss_mib, args.max_fds, args.sample_seconds, evidence / 'abort-request.json')
         self.profile = self.runtime / 'browser-profile'
         self.secondary = self.component = None
         self.current_cycle = 0
         self.soak_started = None
         self.baseline_elapsed = 0
         self.previous_sigterm_handler = None
+        self.interruption_requested = None
         self.activity_seconds = {}
         self.activity_buckets = {}
         self.controlled_interval_seconds = 0.0
@@ -49,6 +68,11 @@ class BrowserSoakSuite(FaultSuite):
             method='BOUNDED_PUBLIC_UI_SOAK_PLUS_SEPARATE_NATIVE_INDEXEDDB_COMPONENT',
             requested={'durationSeconds': args.duration_seconds, 'uiCycles': args.ui_cycles,
                        'componentCycles': args.storage_cycles, 'nativeEveryUiCycles': args.native_every},
+            memoryProfile={'name': args.memory_profile, 'profileCapMiB': MEMORY_PROFILES[args.memory_profile],
+                'effectiveLimitMiB': args.max_rss_mib,
+                'calibrationReason': 'Explicit independent hosted-runner budget calibration; the original 1GiB result remains blocked'
+                    if args.memory_profile == 'hosted-2gib' else 'Original conservative aggregate 1GiB qualification budget',
+                'original1GiBEvidence': PRIOR_1GIB_EVIDENCE, 'productMemoryGuaranteeChanged': False},
             resourceLimits={'aggregateRSSBytes': args.max_rss_mib * 1024 * 1024,
                             'aggregateFDs': args.max_fds, 'tabs': 3},
             coverage={'workbookPublicImports': 0, 'uiCycles': 0, 'uiSaves': 0,
@@ -61,7 +85,7 @@ class BrowserSoakSuite(FaultSuite):
                       'componentFullHistoryProbes': 0},
             stages={name: {'status': 'NOT_RUN'} for name in (
                 'DEPENDENCIES', 'LAUNCHER', 'BROWSER', 'IMPORT_MAPPING_UNITS', 'MISSING_CRS_GUARD',
-                'COMPONENT_SETUP', 'INITIAL_NATIVE_RETRY', 'UI_SOAK', 'COMPONENT_SOAK',
+                'COMPONENT_SETUP', 'INITIAL_NATIVE_RETRY', 'IDLE_BASELINE', 'UI_SOAK', 'COMPONENT_SOAK',
                 'CONTROLLED_429_BUSY', 'PERIODIC_NATIVE_RETRY', 'FINAL_INVARIANTS', 'CLEANUP')},
             notCovered=['COMMAND_MANUAL_APPLY_CANCEL_NOT_REPEATED_THIS_SUITE', 'REAL_DISK_QUOTA_EXHAUSTION',
                 'REAL_OSRM', 'PRIVATE_DATA', 'WINDOWS_OR_MACOS_REAL_MACHINE', 'BROWSER_PROCESS_RESTART',
@@ -75,6 +99,7 @@ class BrowserSoakSuite(FaultSuite):
 
     def write(self):
         if hasattr(self, 'activity_seconds'):
+            self.result['soakWindowStarted'] = self.soak_started is not None
             self.result['activityTiming'] = {
                 'operationSecondsByKind': {k: round(v, 3) for k, v in self.activity_seconds.items()},
                 'totalOperationSeconds': round(sum(self.activity_seconds.values()), 3),
@@ -91,6 +116,7 @@ class BrowserSoakSuite(FaultSuite):
         self.guard()
         super().begin(stage)
         self.events.emit('stage_start', stage=stage, uiCycle=self.current_cycle)
+        print(json.dumps({'stage': stage, 'status': 'RUNNING', 'uiCycle': self.current_cycle}), flush=True)
 
     def passed(self, **details):
         self.guard()
@@ -98,6 +124,8 @@ class BrowserSoakSuite(FaultSuite):
         self.events.emit('stage_pass', stage=self.stage, uiCycle=self.current_cycle, details=details)
 
     def guard(self):
+        if self.interruption_requested is not None:
+            raise SoakDeadlineError(f'SOAK_COOPERATIVE_SIGNAL_{self.interruption_requested}')
         if self.monitor.violation:
             raise AssertionError(json.dumps(self.monitor.violation))
         if self.context:
@@ -117,7 +145,7 @@ class BrowserSoakSuite(FaultSuite):
             self.context = playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.profile), headless=True, executable_path=executable,
                 args=['--disable-webgl'], accept_downloads=True,
-                viewport={'width': 1440, 'height': 950}, reduced_motion='reduce', service_workers='block')
+                viewport={'width': 1440, 'height': 950}, reduced_motion='reduce', service_workers='block', timeout=30000)
         except Exception as exc:
             raise EnvironmentError('Chromium launch blocked/unavailable: ' + str(exc)) from exc
         self.browser = self.context.browser
@@ -130,11 +158,12 @@ class BrowserSoakSuite(FaultSuite):
                 route.abort()
         self.context.route('**/*', restrict)
         self.context.route_web_socket('**/*', lambda socket: socket.close())
-        # The persistent-context initial blank tab is ours; close it before creating
-        # the three explicitly instrumented pages, never touch any existing profile.
-        for page in self.context.pages:
-            page.close()
+        # Keep a live page while replacing the owned persistent-context blank tab.
+        # Closing its only page first is unnecessary and can end a persistent session.
+        initial_pages = list(self.context.pages)
         self.page = self.new_page(self.context)
+        for page in initial_pages:
+            page.close()
         self.secondary = self.new_page(self.context)
         self.component = self.new_page(self.context)
         self.passed(browserVersion=self.browser.version if self.browser else 'persistent-context',
@@ -150,7 +179,7 @@ class BrowserSoakSuite(FaultSuite):
         for name in MODULES:
             self.component.add_script_tag(content=(ROOT / name).read_text(encoding='utf-8'))
         self.component.add_script_tag(content=(ROOT / 'tests/enterprise_browser_storage_soak.js').read_text())
-        result = self.component.evaluate('(name) => enterpriseStorageSoak.init(name)',
+        result = self.component.evaluate('(name) => enterpriseStorageSoak.bounded("init", name)',
                                          'enterprise-soak-component-' + uuid.uuid4().hex)
         self.result['componentBaseline'] = result
         self.passed(**result)
@@ -266,7 +295,7 @@ class BrowserSoakSuite(FaultSuite):
         assert after['savedPointer'] == pointer, 'Read-only UI reopen changed the durable pointer'
         assert after['study']['inputHash'] == before['study']['inputHash']
         assert after['scenario'] == before['scenario'] and after.get('snapshot') == before.get('snapshot')
-        checked = self.component.evaluate('() => enterpriseStorageSoak.finish()')
+        checked = self.component.evaluate('() => enterpriseStorageSoak.bounded("finish")')
         assert checked['completed'] == self.result['coverage']['componentCycles']
         self.result['coverage']['uiDurabilityReopens'] += 1
         self.result['coverage']['componentFullHistoryProbes'] += 1
@@ -298,7 +327,7 @@ class BrowserSoakSuite(FaultSuite):
             self.events.emit('component_cycle_start', cycle=number,
                              method='NATIVE_INDEXEDDB_COMPONENT_NOT_PUBLIC_UI')
             result = self.measured('native_indexeddb_component_cycle',
-                lambda: self.component.evaluate('() => enterpriseStorageSoak.cycle()'))
+                lambda: self.component.evaluate('() => enterpriseStorageSoak.bounded("cycle")'))
             assert result['cycle'] == number
             coverage = self.result['coverage']
             coverage['componentCycles'] += 1
@@ -344,9 +373,29 @@ class BrowserSoakSuite(FaultSuite):
             databaseCount:dbs.length, observedDatabaseNames:dbs.map(d=>d.name), uiStoreCounts};
         }''')
 
+    def idle_baseline(self):
+        self.begin('IDLE_BASELINE')
+        started = time.monotonic()
+        first = self.monitor.sample()
+        while time.monotonic() - started < 10:
+            self.guard()
+            self.page.wait_for_timeout(250)
+        last = self.monitor.sample()
+        baseline = self.monitor.trend(first['elapsedSeconds'])
+        assert baseline['sampleCount'] >= 3, 'Idle baseline needs multiple actual resource samples'
+        median = baseline['rssBytes']['median']
+        baseline.update(observedIdleSeconds=round(time.monotonic() - started, 3),
+            rssRangeFractionOfMedian=round(baseline['rssBytes']['range'] / max(1, median), 6),
+            noForcedGC=True, noApplicationMutation=True, noLimitAdjustment=True,
+            interpretation='Measured idle median and variability; stability is reported, not assumed')
+        self.result['idleResourceBaseline'] = baseline
+        self.result['resourceBaseline'] = last
+        self.baseline_elapsed = last['elapsedSeconds']
+        self.passed(**baseline)
+
     def final_invariants(self):
         self.begin('FINAL_INVARIANTS')
-        component = self.component.evaluate('() => enterpriseStorageSoak.finish()')
+        component = self.component.evaluate('() => enterpriseStorageSoak.bounded("finish")')
         self.result['componentFinal'] = component
         coverage = self.result['coverage']
         assert coverage['uiCycles'] == self.args.ui_cycles
@@ -393,16 +442,17 @@ class BrowserSoakSuite(FaultSuite):
                     componentAndPublicUiEvidenceSeparate=True, evidenceOfNoLeak='NOT_CLAIMED_FROM_FINITE_WINDOW')
 
     def record_failure(self, exc):
-        if not self.monitor.violation:
+        if not self.monitor.violation and not isinstance(exc, SoakDeadlineError):
             super().record_failure(exc)
             return
         # Do not allocate a full-page screenshot or huge application snapshot
         # after a resource-limit interrupt; retain the synthetic profile instead.
-        blocked = self.soak_started is None
+        blocked = self.soak_started is None and self.monitor.violation is not None
         self.result['status'] = 'BLOCKED_ENVIRONMENT' if blocked else 'FAIL'
         self.result['error'] = self.scrub(str(exc))
         self.result['stages'][self.stage] = {'status': self.result['status'],
-            'reason': 'ISOLATED_BASELINE_RESOURCE_BUDGET_OR_OBSERVATION_BLOCKED' if blocked else
+            'reason': 'COOPERATIVE_STOP_REQUESTED' if isinstance(exc, SoakDeadlineError) and not self.monitor.violation else
+                      'ISOLATED_BASELINE_RESOURCE_BUDGET_OR_OBSERVATION_BLOCKED' if blocked else
                       'SUSTAINED_RESOURCE_LIMIT_OR_OBSERVATION_FAILED',
             'details': self.monitor.violation}
         if blocked:
@@ -415,11 +465,6 @@ class BrowserSoakSuite(FaultSuite):
             self.result['resourceViolation'] = self.monitor.violation
             if self.soak_started is not None:
                 self.result['status'] = 'FAIL'
-        if self.component and not self.component.is_closed():
-            try:
-                self.component.evaluate('() => window.enterpriseStorageSoak?.close()')
-            except Exception:
-                pass
         # Finish application fault/job cleanup while the context remains usable.
         # Base cleanup closes our browser and uses the launcher's ownership checks.
         # Move (not duplicate) the synthetic profile before base deletes runtime.
@@ -437,13 +482,20 @@ class BrowserSoakSuite(FaultSuite):
 
     def run(self):
         def terminated(signum, _frame):
-            raise RuntimeError(f'SOAK_INTERRUPTED_SIGNAL_{signum}: preserve evidence and clean only owned services')
+            # Never raise inside the Playwright dispatcher greenlet.
+            self.interruption_requested = signum
         self.previous_sigterm_handler = signal.signal(signal.SIGTERM, terminated)
         try:
             self.monitor.start()
             self.launch()
             for kind in ('web', 'optimizer'):
-                self.monitor.add_root(self.record[kind]['pid'])
+                self.monitor.add_root(self.record[kind]['pid'], kind='services_workers')
+            owned = {'runToken': self.runtime.name, 'services': [
+                {'pid': self.record[kind]['pid'], 'startTicks': self.monitor.roots[self.record[kind]['pid']]}
+                for kind in ('web', 'optimizer')]}
+            pending = self.runtime / 'owned-processes.pending'
+            pending.write_text(json.dumps(owned))
+            pending.replace(self.runtime / 'owned-processes.json')
             from playwright.sync_api import sync_playwright
             with sync_playwright() as playwright:
                 try:
@@ -456,9 +508,7 @@ class BrowserSoakSuite(FaultSuite):
                     login(self.secondary, self.base)
                     self.reopen_public(self.secondary, self.master_id)
                     self.result['storageBaseline'] = self.storage_observation()
-                    baseline = self.monitor.sample()
-                    self.baseline_elapsed = baseline['elapsedSeconds']
-                    self.result['resourceBaseline'] = baseline
+                    self.idle_baseline()
                     self.page.screenshot(path=str(self.evidence / 'baseline-ui.png'), full_page=True)
                     self.soak_started = time.monotonic()
                     self.events.emit('soak_window_start', coverage=self.result['coverage'])
@@ -485,6 +535,7 @@ class BrowserSoakSuite(FaultSuite):
                     if isinstance(exc, (KeyboardInterrupt, SystemExit)) and self.monitor.violation:
                         exc = AssertionError(json.dumps(self.monitor.violation))
                     self.record_failure(exc)
+                    self.write()
                     self.events.emit('failure', stage=self.stage, uiCycle=self.current_cycle,
                                      error=str(exc), coverage=self.result['coverage'])
                 finally:
@@ -493,6 +544,7 @@ class BrowserSoakSuite(FaultSuite):
             if isinstance(exc, (KeyboardInterrupt, SystemExit)) and self.monitor.violation:
                 exc = AssertionError(json.dumps(self.monitor.violation))
             self.record_failure(exc)
+            self.write()
             self.events.emit('failure', stage=self.stage, error=str(exc), coverage=self.result['coverage'])
             if not self.cleaned:
                 try:
@@ -521,8 +573,12 @@ def parse_args(argv=None):
     parser.add_argument('--storage-cycles', type=int, default=600)
     parser.add_argument('--native-every', type=int, default=5)
     parser.add_argument('--sample-seconds', type=float, default=1)
-    parser.add_argument('--max-rss-mib', type=int, default=1024)
+    parser.add_argument('--memory-profile', choices=tuple(MEMORY_PROFILES), default='standard-1gib')
+    parser.add_argument('--max-rss-mib', type=int, default=None,
+                        help='Optional tighter limit within the explicitly selected memory profile')
     parser.add_argument('--max-fds', type=int, default=1024)
+    parser.add_argument('--max-wall-seconds', type=float, default=None,
+                        help='Independent process watchdog; default 180 for smoke, duration+120 otherwise')
     parser.add_argument('--smoke', action='store_true', help='Allow short harness check; never qualifies as soak evidence')
     args = parser.parse_args(argv)
     if not 1 <= args.ui_cycles <= 50 or not 1 <= args.storage_cycles <= 1000:
@@ -533,10 +589,17 @@ def parse_args(argv=None):
         parser.error('Soak requires >=600 seconds, >=20 UI cycles, >=300 components; use --smoke for a short check')
     if not 1 <= args.native_every <= args.ui_cycles:
         parser.error('native-every must be within 1..ui-cycles')
-    if not 1 <= args.max_rss_mib <= 1024 or not 1 <= args.max_fds <= 1024:
-        parser.error('Resource limits cannot exceed 1024 MiB aggregate RSS / 1024 aggregate fds')
+    profile_limit = MEMORY_PROFILES[args.memory_profile]
+    if args.max_rss_mib is None:
+        args.max_rss_mib = profile_limit
+    if not 1 <= args.max_rss_mib <= profile_limit or not 1 <= args.max_fds <= 1024:
+        parser.error('RSS may not exceed the named profile cap; aggregate FD limit remains 1024')
     if not math.isfinite(args.sample_seconds) or not .25 <= args.sample_seconds <= 5:
         parser.error('Resource sampling must be every .25..5 seconds')
+    if args.max_wall_seconds is None:
+        args.max_wall_seconds = 180 if args.smoke else args.duration_seconds + 120
+    if not math.isfinite(args.max_wall_seconds) or args.max_wall_seconds < max(30, args.duration_seconds):
+        parser.error('max-wall-seconds must be finite and >= max(30, duration-seconds)')
     evidence = args.evidence_dir.expanduser().resolve()
     if evidence == ROOT or ROOT in evidence.parents:
         parser.error('Evidence must be outside the checkout')
@@ -549,7 +612,76 @@ def parse_args(argv=None):
 
 def main():
     args = parse_args()
-    return BrowserSoakSuite(args.evidence_dir, args).run()
+    if os.environ.get('STCT_SOAK_WORKER') == '1':
+        return BrowserSoakSuite(args.evidence_dir, args).run()
+    return supervised_run(args, sys.argv[1:])
+
+
+def supervised_run(args, argv):
+    """The supervisor never starts a browser or invokes a Playwright API itself."""
+    runtime = Path(tempfile.mkdtemp(prefix='stct-browser-soak-owned-'))
+    env = {**os.environ, 'STCT_SOAK_WORKER': '1', 'STCT_SOAK_OWNED_RUNTIME': str(runtime),
+           'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONUNBUFFERED': '1',
+           'STCT_SOAK_SUPERVISOR_PID': str(os.getpid()),
+           'STCT_SOAK_SUPERVISOR_START_TICKS': str(process_table()[os.getpid()]['startTicks'])}
+    child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), *argv],
+                             cwd=ROOT, env=env, start_new_session=True)
+    def stop_owned_services():
+        run_dir = runtime / 'launcher'
+        if not (run_dir / 'trial.json').exists():
+            return {'status': 'NO_OWNERSHIP_RECEIPT', 'foreignProcessesTouched': False}
+        stopped = subprocess.run([sys.executable, str(ROOT / 'scripts/local_trial.py'), 'stop'],
+            cwd=ROOT, env={**env, 'STCT_RUN_DIR': str(run_dir)}, capture_output=True, text=True, timeout=40)
+        # Preserve the launcher's own identity checks, without using a browser connection.
+        (args.evidence_dir / 'supervisor-launcher-stop.log').write_text(
+            (stopped.stdout + stopped.stderr).replace(str(runtime), '<runtime>').replace(str(ROOT), '<checkout>'))
+        return {'status': 'PASS' if stopped.returncode == 0 and not (run_dir / 'trial.json').exists() else 'FAIL',
+                'returnCode': stopped.returncode}
+    code, failure, process_cleanup = supervise_process(child, args.max_wall_seconds,
+        args.evidence_dir / 'abort-request.json', stop_owned_services,
+        owned_roots_path=runtime / 'owned-processes.json', run_token=runtime.name)
+    if failure:
+        summary_path = args.evidence_dir / 'summary.json'
+        try:
+            summary = json.loads(summary_path.read_text())
+        except (OSError, ValueError):
+            summary = {'status': 'FAIL', 'source': source_identity(ROOT), 'stages': {}}
+        baseline_budget = failure.get('reason') in ('RESOURCE_UPPER_BOUND_EXCEEDED', 'RESOURCE_OBSERVATION_FAILED') \
+                          and not summary.get('soakWindowStarted', False)
+        cleanup_ok = failure.get('ownedServiceCleanup', {}).get('status') in ('PASS', 'NO_OWNERSHIP_RECEIPT') and process_cleanup['status'] == 'PASS'
+        summary['status'] = 'BLOCKED_ENVIRONMENT' if baseline_budget and cleanup_ok else 'FAIL'
+        failure['runToken'] = runtime.name
+        summary['supervisor'] = failure
+        summary['ownedProcessCleanup'] = process_cleanup
+        summary['soakQualification'] = 'NOT_RUN_RESOURCE_BASELINE_BLOCKED' if baseline_budget else 'FAIL_WATCHDOG_OR_INTERRUPTION'
+        summary.setdefault('stages', {})['SUPERVISOR'] = {'status': summary['status'], 'reason': failure['reason']}
+        if not cleanup_ok:
+            summary['stages']['CLEANUP'] = {'status': 'FAIL', 'details': failure['ownedServiceCleanup']}
+        profile = runtime / 'browser-profile'
+        if profile.exists():
+            destination = args.evidence_dir / 'failed-synthetic-browser-profile'
+            if not destination.exists():
+                shutil.move(str(profile), str(destination))
+                summary['reproductionProfileRetained'] = True
+                summary['profileMayRequireCrashRecovery'] = True
+        for name in ('web.log', 'optimizer.log'):
+            source = runtime / 'launcher' / name
+            if source.exists():
+                (args.evidence_dir / ('supervisor-' + name)).write_text(
+                    source.read_text(errors='replace').replace(str(runtime), '<runtime>').replace(str(ROOT), '<checkout>'))
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+        print(json.dumps({'status': summary['status'], 'supervisor': failure}), flush=True)
+        return 78 if summary['status'] == 'BLOCKED_ENVIRONMENT' else 1
+    summary_path = args.evidence_dir / 'summary.json'
+    try:
+        summary = json.loads(summary_path.read_text())
+        summary['ownedProcessCleanup'] = process_cleanup
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+    except (OSError, ValueError):
+        (args.evidence_dir / 'supervisor-process-cleanup.json').write_text(json.dumps(process_cleanup, indent=2) + '\n')
+    if runtime.exists() and not any(runtime.iterdir()):
+        runtime.rmdir()
+    return code
 
 
 if __name__ == '__main__':

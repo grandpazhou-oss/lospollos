@@ -107,7 +107,7 @@ jobs:
   stress-soak:
     name: Sustained native and browser load
     # Run once for an explicit validation-branch push, not again on its PR event.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/enterprise-validation-20261006'
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/codex/enterprise-validation-20261006' }}
     needs: [core, native-browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -145,7 +145,7 @@ jobs:
         id: browser_smoke
         timeout-minutes: 5
         if: ${{ !cancelled() }}
-        run: python tests/test_enterprise_browser_soak.py --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser"
+        run: python tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -167,7 +167,7 @@ jobs:
       - name: Twelve-minute isolated UI and native IndexedDB soak
         timeout-minutes: 16
         if: ${{ !cancelled() && steps.browser_smoke.outcome == 'success' }}
-        run: python tests/test_enterprise_browser_soak.py --duration-seconds 720 --evidence-dir "$RUNNER_TEMP/enterprise-browser-soak"
+        run: python tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --duration-seconds 720 --evidence-dir "$RUNNER_TEMP/enterprise-browser-soak"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
