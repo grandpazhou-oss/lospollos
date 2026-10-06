@@ -56,6 +56,10 @@ The browser appends a declared test wrapper immediately after the unchanged
 platform-repository-v19.js response, before platform services create their
 repository. The response must match checked-out source exactly before the appendix
 is applied. The original frozen repository and transaction code stay unchanged.
+The appendix exits immediately outside a Window with a document, preserving the
+snapshot worker's original importScripts/CommonJS export behavior. A pure Node VM
+negative control loads the real repository module in worker-shaped realms and
+checks that the appendix neither installs a hook nor changes module exports.
 The wrapper delegates one named Save to the real repository, waits for native
 transaction completion and independent readback, and then holds only its returned
 Promise receipt.

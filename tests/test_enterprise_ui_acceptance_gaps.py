@@ -58,6 +58,9 @@ COMMON_REQUIRED_STAGES = ('DEPENDENCIES', 'LAUNCHER', 'BROWSER', 'IMPORT_MAPPING
 SAVE_RECEIPT_HOOK = r"""
 (() => {
   'use strict';
+  // The same script is imported by the snapshot worker using CommonJS exports.
+  // Only the real Window receives the UI timing hook; workers stay untouched.
+  if (typeof window === 'undefined' || window !== globalThis || !globalThis.document) return;
   const ns = globalThis.STCTPlatformV19, original = ns.platformRepository;
   if (globalThis.__acceptanceSaveReceipt || !original?.createRepository)
     throw Error('SAVE_RECEIPT_HOOK_INSTALL_INVALID');
@@ -582,6 +585,7 @@ class AcceptanceGapGuardTests(unittest.TestCase):
         fixture = r"""
 const assert=require('node:assert/strict');
 let clock=100, timeout, committed=false, complete;
+globalThis.window=globalThis;globalThis.document={};
 globalThis.performance={now:()=>clock};
 globalThis.setTimeout=(fn,ms)=>{assert.equal(ms,5000);timeout=fn;return 1;};
 globalThis.clearTimeout=()=>{};
@@ -624,6 +628,35 @@ globalThis.STCTPlatformV19={platformRepository:original};
         script = fixture + '\nconst hookSource=' + json.dumps(SAVE_RECEIPT_HOOK) + ';\n' \
             + SAVE_RECEIPT_HOOK + assertions
         result = subprocess.run([node], input=script,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_worker_import_preserves_real_repository_exports_without_hook(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable; pure worker-realm guard not executed')
+        repository = (ROOT / 'platform-repository-v19.js').read_text()
+        script = 'const repositorySource=' + json.dumps(repository) + ';\n' \
+            + 'const hookSource=' + json.dumps(SAVE_RECEIPT_HOOK) + ';\n' + r"""
+const assert=require('node:assert/strict'),vm=require('node:vm');
+for (const existingNamespace of [false,true]) {
+  const realm={module:{exports:{}},structuredClone,performance,
+    require:name=>{assert.equal(name,'./network-contract-v18.js');return require(name);}};
+  if(existingNamespace)realm.STCTPlatformV19={sentinel:'worker namespace'};
+  const namespace=realm.STCTPlatformV19;
+  realm.self=realm;vm.createContext(realm);
+  vm.runInContext(repositorySource,realm,{filename:'platform-repository-v19.js'});
+  const exports=realm.module.exports;
+  assert.equal(typeof exports.createRepository,'function');
+  assert.equal(realm.document,undefined);assert.equal(realm.window,undefined);
+  vm.runInContext(hookSource,realm,{filename:'acceptance-window-only-hook.js'});
+  assert.equal(realm.module.exports,exports);
+  assert.equal(realm.STCTPlatformV19,namespace);
+  assert.equal(realm.__acceptanceSaveReceipt,undefined);
+}
+console.log('Pure snapshot-worker import preserves real repository exports PASS');
+"""
+        result = subprocess.run([node], input=script, cwd=ROOT,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
