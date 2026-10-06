@@ -79,7 +79,7 @@ including worker children launched from non-main threads. Aggregate limits are
 RSS 1 GiB, 512 descriptors, 64 threads and one live worker. Cross-thread/process
 native execution must never exceed one. Limits, conservation failures, orphan
 or idle-reclamation timeouts stop the run and clean up only owned processes.
-Signals use pidfd plus PID/start-time/command verification. Protected service
+Signals use pidfd plus PID/start-time/command verification. The free-port probe uses the HTTP server’s SO_REUSEADDR policy and verifies bind plus listen, so a closed owned server’s TIME_WAIT connection does not masquerade as a live listener. SO_REUSEPORT is never enabled. Active listeners, including a separate owned-PID control, and non-reusable bound sockets must still be rejected. Protected service
 ports 8787, 8877, 8791, 8766, 8788 and 19095 are refused.
 
 Completed jobs are retained by count, not TTL: 15 old completed jobs before a

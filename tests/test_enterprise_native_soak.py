@@ -6,13 +6,16 @@ import argparse
 from collections import Counter, deque
 import concurrent.futures
 import copy
+import errno
 import hashlib
 import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.metadata
 import json
 import os
 from pathlib import Path
 import signal
+import select
 import socket
 import subprocess
 import sys
@@ -120,7 +123,12 @@ def choose_port(requested):
     require(requested not in PROTECTED_PORTS, 'Refusing a protected port')
     require(0 <= requested <= 65535, 'Invalid port')
     with socket.socket() as sock:
+        # Match the actual HTTP server: a just-stopped owned backend can leave
+        # TIME_WAIT connections. SO_REUSEADDR admits those, never an existing
+        # listener (SO_REUSEPORT is deliberately not enabled). Probe listen too.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, int(ThreadingHTTPServer.allow_reuse_address))
         sock.bind(('127.0.0.1', requested))
+        sock.listen(1)
         port = sock.getsockname()[1]
     require(port not in PROTECTED_PORTS, 'Kernel selected a protected port; retry with --port 0')
     return port
@@ -919,6 +927,81 @@ class NativeSoak:
         raise AssertionError('Owned PID remains after final cleanup: ' + str([row['pid'] for row in alive]))
 
 
+def port_probe_self_test():
+    """Only owned loopback HTTP/socket controls; no native solver dependency."""
+    class ProbeHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-Length', '2')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        def log_message(self, *args):
+            pass
+
+    def assert_occupied(port):
+        try:
+            choose_port(port)
+        except OSError as exc:
+            require(exc.errno == errno.EADDRINUSE, 'Occupied-port probe failed for an unrelated reason')
+        else:
+            raise AssertionError('Port probe accepted a genuinely occupied port')
+
+    cycles = []
+    port = choose_port(0)
+    for cycle in range(3):
+        server = ThreadingHTTPServer(('127.0.0.1', port), ProbeHandler)
+        # A non-daemon request thread is joined before server_close returns.
+        server.daemon_threads = False
+        thread = threading.Thread(target=server.handle_request, daemon=True)
+        try:
+            assert_occupied(port)
+            thread.start()
+            with socket.create_connection(('127.0.0.1', port), timeout=3) as client:
+                client.sendall(b'GET / HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n')
+                response = b''
+                while data := client.recv(4096):
+                    response += data
+                require(response.endswith(b'OK'), 'Owned HTTP control did not complete before close')
+            thread.join(timeout=3)
+            require(not thread.is_alive(), 'Owned HTTP probe thread did not finish')
+        finally:
+            server.server_close()
+        require(choose_port(port) == port, 'Closed HTTP backend could not reuse its TIME_WAIT port')
+        cycles.append({'cycle': cycle+1, 'port': port, 'activeListenerRejected': True,
+                       'completedHttpConnection': True, 'postCloseReuseAccepted': True})
+
+    unused_port = choose_port(0)
+    with socket.socket() as occupied:
+        occupied.bind(('127.0.0.1', unused_port))
+        assert_occupied(occupied.getsockname()[1])
+
+    # Also prove refusal across a PID boundary; only this newly created child is
+    # controlled. It closes normally when its private stdin receives a line.
+    other_port = choose_port(0)
+    code = ('import socket,sys\n'
+            's=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\n'
+            's.bind(("127.0.0.1",int(sys.argv[1])));s.listen(1)\n'
+            'print("READY",flush=True);sys.stdin.readline();s.close()\n')
+    child = subprocess.Popen([sys.executable, '-c', code, str(other_port)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        require(bool(select.select([child.stdout], [], [], 3)[0]), 'Owned listener child did not become ready')
+        require(child.stdout.readline().strip() == 'READY', 'Owned listener child failed startup')
+        assert_occupied(other_port)
+        child.communicate('close\n', timeout=3)
+        require(child.returncode == 0, 'Owned listener child did not exit cleanly')
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=3)
+        for stream in (child.stdin, child.stdout, child.stderr):
+            stream.close()
+    return {'evidenceClass': 'OWNED_LOOPBACK_HTTP_SOCKET_NOT_NATIVE', 'cycles': cycles,
+            'boundUnlisteningSocketRejected': True, 'otherOwnedPidListenerRejected': True,
+            'reusePortEnabled': False, 'allOwnedControlsClosed': True}
+
+
 def controlled_race_self_test():
     """Pure state-machine fixtures, never a native solver or transport claim."""
     class ControlledEvidence:
@@ -1025,8 +1108,9 @@ def self_test():
     require(spans.disconnect_witness(active, 21) is None, 'Completed-before-close race counted as fault')
     require(spans.disconnect_witness(None, 17) is None, 'Unobserved span counted as fault')
     race_checks = controlled_race_self_test()
+    port_checks = port_probe_self_test()
     return {'status': 'SELF_TEST_PASS_NOT_NATIVE', 'nativeExecutionVerified': False,
-            'payloadContracts': result, 'controlledRaceChecks': race_checks, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected', 'disconnect_requires_owned_active_outer_span', 'disconnect_close_inside_span', 'completed_before_close_is_missed']}
+            'payloadContracts': result, 'controlledRaceChecks': race_checks, 'portProbeChecks': port_checks, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected', 'disconnect_requires_owned_active_outer_span', 'disconnect_close_inside_span', 'completed_before_close_is_missed']}
 
 
 def main():
