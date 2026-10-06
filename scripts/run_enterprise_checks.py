@@ -17,6 +17,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 CORE_JS = (
     'test_enterprise_storage_races.cjs',
+    'test_enterprise_draft_view_import.cjs',
     'test_cancel_view_status.cjs',
     'test_command_applied_geometry.cjs', 'test_command_apply_transaction.cjs',
     'test_enterprise_road_report_truthfulness.js',
