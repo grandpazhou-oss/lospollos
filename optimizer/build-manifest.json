@@ -11,7 +11,7 @@
     },
     {
       "path": "optimizer/facility_mvp1.py",
-      "sha256": "993817e35ca44f5af303ba47a651f7672b56263d02e38ad76f5d53157abaad63"
+      "sha256": "cc6d99851685d47bab19012a2bc793a2f0366facebd4968ffff54a81bd030b51"
     },
     {
       "path": "optimizer/matrix_contract.py",
@@ -74,5 +74,5 @@
       "sha256": "92f26e26cfed3f0a25d56662012f180dcedc5388d6e4595a8d5f75317489fb82"
     }
   ],
-  "fingerprint": "0f9857a7c66ea83deceb8f7826ba75c89d6a52c22839e88683a01fda58a1fe12"
+  "fingerprint": "33f19954a022d6d9dccd429599fc5a429741d6900c375c992742ee32282c222c"
 }

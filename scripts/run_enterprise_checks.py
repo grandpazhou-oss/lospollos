@@ -82,7 +82,7 @@ def main() -> int:
         for name in CORE_JS:
             run(name, ['node', 'tests/' + name])
         for name in ('test_backend_build_fingerprint.py', 'test_checkout_line_endings.py', 'test_required_public_assets.py', 'test_enterprise_admission.py',
-                     'test_enterprise_solver_lifecycle.py', 'test_enterprise_check_reporting.py'):
+                     'test_enterprise_solver_lifecycle.py', 'test_enterprise_facility_deadline.py', 'test_enterprise_check_reporting.py'):
             run(name, [sys.executable, 'tests/' + name])
     if args.mode in ('native', 'all'):
         ready = run('ortools-dependency', [sys.executable, '-c',

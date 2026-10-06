@@ -19,7 +19,7 @@
     facilityOptimizerApiUrl:optimizerOrigin+'/facility-optimize-v19',
     // Production candidate: never silently accept a different or missing build pin.
     optimizerBuildPolicy:'STRICT_PINNED',
-    expectedOptimizerBuildFingerprint:'0f9857a7c66ea83deceb8f7826ba75c89d6a52c22839e88683a01fda58a1fe12',
+    expectedOptimizerBuildFingerprint:'33f19954a022d6d9dccd429599fc5a429741d6900c375c992742ee32282c222c',
     roadProfile:'driving',
     // Local reuse policy, not a guarantee of road or traffic freshness.
     roadReuseMaxAgeMs:30*24*60*60*1000,
