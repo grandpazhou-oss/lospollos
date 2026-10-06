@@ -130,6 +130,8 @@ class BoundaryLedger:
     """Thread spans count once when solver entrypoints nest in one request."""
     def __init__(self):
         self.active = {}
+        self.active_started = {}
+        self.completed_spans = deque(maxlen=64)
         self.verified_exits = {}
         self.last_ns = 0
         self.maximum = 0
@@ -145,6 +147,7 @@ class BoundaryLedger:
             ended = self.verified_exits.get(key[:2])
             if ended is not None and ended <= at_ns:
                 self.active.pop(key)
+                self.active_started.pop(key, None)
 
     def feed(self, row):
         require(row['monoNs'] >= self.last_ns, 'Non-monotonic native boundary evidence')
@@ -154,6 +157,8 @@ class BoundaryLedger:
         if row['event'] == 'enter':
             require(key[:2] not in self.verified_exits or row['monoNs'] < self.verified_exits[key[:2]],
                     'Native entry after verified process exit')
+            if key not in self.active:
+                self.active_started[key] = row['monoNs']
             self.active.setdefault(key, []).append(row['function'])
             self.maximum = max(self.maximum, len(self.active))
             require(len(self.active) <= 1, 'GLOBAL_NATIVE_CONCURRENCY_EXCEEDED: ' + str(list(self.active)))
@@ -164,9 +169,24 @@ class BoundaryLedger:
             self.active[key].pop()
             if not self.active[key]:
                 self.active.pop(key)
+                self.completed_spans.append({'pid': key[0], 'startTicks': key[1], 'thread': key[2],
+                                             'beginNs': self.active_started.pop(key), 'endNs': row['monoNs']})
             self.exits += 1
         else:
             raise AssertionError('Invalid native boundary event')
+
+    def active_span(self, identity):
+        for key, begun in self.active_started.items():
+            if key[:2] == (identity['pid'], identity['startTicks']):
+                return {'pid': key[0], 'startTicks': key[1], 'thread': key[2], 'beginNs': begun}
+        return None
+
+    def disconnect_witness(self, observed, closed_ns):
+        if observed is None:
+            return None
+        return next((row for row in self.completed_spans
+                     if all(row[key] == observed[key] for key in ('pid', 'startTicks', 'thread', 'beginNs'))
+                     and row['beginNs'] <= closed_ns <= row['endNs']), None)
 
 
 class BlockedEnvironment(RuntimeError):
@@ -586,7 +606,9 @@ class NativeSoak:
         before = self.wait_worker(job_id, solving=True) if solving else started
         if before is None:
             self.validate_job(spec, self.await_job(job_id), 'fault_setup')
-            self.evidence.event('fault_window_missed', method='cancel_solving')
+            self.evidence.event('fault_window_missed', method='cancel_solving', reason='completed_before_solving_observation')
+            self.evidence.increment('cancel_window_misses')
+            self.await_idle()
             return False
         self.capture_workers()
         # Record cancellation intent before the backend is asked to stop its worker.
@@ -595,7 +617,18 @@ class NativeSoak:
             for identity in self.owned.values():
                 if identity['role'] == 'worker' and same_process(identity):
                     self.fault_exit_times[identity['pid']] = now
-        for attempt in range(3):
+        status, value = self.request(JOB_ROUTE + '/' + job_id + '/cancel', {})
+        require(status == 200, 'First cancellation HTTP request failed')
+        if value['status'] in {'COMPLETE', 'PARTIAL'}:
+            final = self.await_job(job_id)
+            self.validate_job(spec, final, 'fault_setup')
+            self.evidence.event('fault_window_missed', method='cancel_solving' if solving else 'cancel_start_race',
+                                jobId=job_id, reason='native_completion_won_first_cancel', status=final['status'])
+            self.evidence.increment('cancel_window_misses')
+            self.await_idle()
+            return False
+        require(value['status'] == 'CANCELLED', 'First cancellation returned an unexpected terminal state')
+        for attempt in range(2):
             status, value = self.request(JOB_ROUTE + '/' + job_id + '/cancel', {})
             require(status == 200 and value['status'] == 'CANCELLED', 'Repeated cancel did not stay cancelled')
         final = self.await_job(job_id)
@@ -647,27 +680,45 @@ class NativeSoak:
         raw = json.dumps(payload, separators=(',', ':')).encode()
         request = (f'POST /optimize HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n'
                    f'Content-Type: application/json\r\nContent-Length: {len(raw)}\r\nConnection: close\r\n\r\n').encode() + raw
-        before = self.evidence.counts['native_boundary_entries']
         sock = socket.create_connection(('127.0.0.1', self.port), timeout=5)
+        observed = None
+        closed_ns = None
         try:
             sock.sendall(request)
-            # Observe actual native entry before dropping the HTTP client.
+            # Read fresh boundary evidence, not an entry counter that may
+            # already include a completed request. Observe our exact backend.
             deadline = time.monotonic() + 3
-            while self.evidence.counts['native_boundary_entries'] <= before and time.monotonic() < deadline:
+            while time.monotonic() < deadline:
                 self.check()
+                with self.boundary_lock:
+                    self.inspect_boundaries()
+                    observed = self.boundaries.active_span(self.backend_identity)
+                if observed is not None:
+                    break
                 time.sleep(.01)
-            require(self.evidence.counts['native_boundary_entries'] > before, 'Disconnected request never entered native solve')
         finally:
             sock.close()
+            closed_ns = time.monotonic_ns()
+        self.evidence.event('client_connection_closed', observedActiveSpan=observed, closedMonoNs=closed_ns)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             status, result = self.request('/optimize', payload)
             if status == 200:
                 checks = validate_result('/optimize', payload, result)
-                self.evidence.event('fault_verified', method='CLIENT_DISCONNECT_DURING_NATIVE_SOLVE', checks=checks)
-                self.evidence.increment('disconnect_recoveries')
                 self.await_idle()
-                return
+                with self.boundary_lock:
+                    self.inspect_boundaries()
+                    witness = self.boundaries.disconnect_witness(observed, closed_ns)
+                if witness is None:
+                    self.evidence.event('fault_window_missed', method='CLIENT_DISCONNECT_DURING_NATIVE_SOLVE',
+                                        reason='no_active_owned_span_at_close_or_solve_completed_before_close',
+                                        observedActiveSpan=observed, closedMonoNs=closed_ns, recoveryChecks=checks)
+                    self.evidence.increment('disconnect_window_misses')
+                    return False
+                self.evidence.event('fault_verified', method='CLIENT_DISCONNECT_DURING_NATIVE_SOLVE', checks=checks,
+                                    boundaryWitness=witness, closedMonoNs=closed_ns)
+                self.evidence.increment('disconnect_recoveries')
+                return True
             require(status == 429, 'Unexpected response while disconnect solve drains')
             time.sleep(.05)
         raise AssertionError('Disconnected native solve did not release admission')
@@ -868,6 +919,61 @@ class NativeSoak:
         raise AssertionError('Owned PID remains after final cleanup: ' + str([row['pid'] for row in alive]))
 
 
+def controlled_race_self_test():
+    """Pure state-machine fixtures, never a native solver or transport claim."""
+    class ControlledEvidence:
+        def __init__(self):
+            self.counts, self.events = Counter(), []
+        def event(self, kind, **values):
+            self.events.append({'event': kind, **values})
+        def increment(self, key, amount=1):
+            self.counts[key] += amount
+
+    def runner_for(responses, final_status):
+        runner = NativeSoak.__new__(NativeSoak)
+        runner.evidence = ControlledEvidence()
+        runner.owned_lock, runner.owned, runner.fault_exit_times = threading.RLock(), {}, {}
+        runner.new_fault_job = lambda: ({}, {'jobId': 'CONTROLLED', 'status': 'PREPARING'})
+        runner.wait_worker = lambda *args, **kwargs: {'jobId': 'CONTROLLED', 'status': 'SOLVING'}
+        runner.capture_workers = lambda: []
+        runner.calls, runner.validated, runner.idles = [], [], []
+        final = {'jobId': 'CONTROLLED', 'status': final_status, 'pid': None}
+        def request(route, payload):
+            runner.calls.append(route)
+            return 200, {'status': responses[len(runner.calls)-1]}
+        runner.request = request
+        runner.await_job = lambda *args: final
+        runner.validate_job = lambda *args: runner.validated.append(args)
+        runner.await_idle = lambda: runner.idles.append(True)
+        return runner
+
+    checked = []
+    for status in ('COMPLETE', 'PARTIAL'):
+        runner = runner_for([status], status)
+        require(runner.cancel_race(solving=True) is False, 'Completed-before-cancel race counted as cancellation')
+        require(len(runner.calls) == 1 and len(runner.validated) == 1 and len(runner.idles) == 1,
+                'Completed-before-cancel race skipped validation/reclamation or repeated cancel')
+        require(runner.evidence.counts['cancel_solving'] == 0 and runner.evidence.counts['repeat_cancel'] == 0,
+                'Missed cancellation window changed genuine coverage')
+        checked.append('first_cancel_' + status.lower() + '_is_verified_miss')
+    runner = runner_for(['CANCELLED']*3, 'CANCELLED')
+    require(runner.cancel_race() is True and len(runner.calls) == 3, 'Real cancellation coverage missing')
+    require(runner.evidence.counts['cancel_start_race'] == 1 and runner.evidence.counts['repeat_cancel'] == 2,
+            'Stable repeat cancellation counts changed')
+    checked.append('actual_cancel_requires_two_stable_repeats')
+    for bad in ('COMPLETE', 'PARTIAL', 'FAILED'):
+        runner = runner_for(['CANCELLED', bad], bad)
+        try:
+            runner.cancel_race()
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('Unstable repeat cancellation was accepted')
+        require(not runner.evidence.counts['cancel_start_race'], 'Failed race received coverage')
+    checked.append('cancelled_cannot_later_complete_or_fail')
+    return {'evidenceClass': 'CONTROLLED_STATE_MACHINE_NOT_NATIVE', 'checks': checked}
+
+
 def self_test():
     result = payload_self_test()
     require('/optimizer/' in str(ROOT / 'optimizer' / 'ortools_service.py'), 'Bad repository root')
@@ -906,8 +1012,21 @@ def self_test():
         except AssertionError:
             continue
         raise AssertionError('Boundary observer missed overlap, disorder, or unmatched exit')
+    spans = BoundaryLedger()
+    spans.feed(boundary('enter', 10))
+    require(spans.active_span({'pid': 100, 'startTicks': 2}) is None, 'PID reuse masqueraded as active solve')
+    active = spans.active_span({'pid': 100, 'startTicks': 1})
+    require(active is not None, 'Live owned outer span not observed')
+    spans.feed(boundary('enter', 12, function='solve_rolling'))
+    spans.feed(boundary('exit', 15, function='solve_rolling'))
+    spans.feed(boundary('exit', 20))
+    require(spans.active_span({'pid': 100, 'startTicks': 1}) is None, 'Completed entry counted as active')
+    require(spans.disconnect_witness(active, 17) is not None, 'Disconnect within outer span lacked witness')
+    require(spans.disconnect_witness(active, 21) is None, 'Completed-before-close race counted as fault')
+    require(spans.disconnect_witness(None, 17) is None, 'Unobserved span counted as fault')
+    race_checks = controlled_race_self_test()
     return {'status': 'SELF_TEST_PASS_NOT_NATIVE', 'nativeExecutionVerified': False,
-            'payloadContracts': result, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected']}
+            'payloadContracts': result, 'controlledRaceChecks': race_checks, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected', 'disconnect_requires_owned_active_outer_span', 'disconnect_close_inside_span', 'completed_before_close_is_missed']}
 
 
 def main():

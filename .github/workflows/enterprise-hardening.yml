@@ -132,9 +132,18 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Native soak harness preflight (not a completed soak)
         id: native_smoke
+        timeout-minutes: 5
         run: python tests/test_enterprise_native_soak.py --duration-seconds 90 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/native"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-native-preflight
+          path: ${{ runner.temp }}/enterprise-soak-preflight/native
+          retention-days: 7
+          if-no-files-found: warn
       - name: Browser soak harness preflight (not a completed soak)
         id: browser_smoke
+        timeout-minutes: 5
         if: ${{ !cancelled() }}
         run: python tests/test_enterprise_browser_soak.py --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -145,6 +154,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       - name: Thirty-minute real native progressive load and lifecycle soak
+        timeout-minutes: 36
         if: ${{ !cancelled() && steps.native_smoke.outcome == 'success' }}
         run: python tests/test_enterprise_native_soak.py --duration-seconds 1800 --evidence-dir "$RUNNER_TEMP/enterprise-native-soak"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -155,6 +165,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       - name: Twelve-minute isolated UI and native IndexedDB soak
+        timeout-minutes: 16
         if: ${{ !cancelled() && steps.browser_smoke.outcome == 'success' }}
         run: python tests/test_enterprise_browser_soak.py --duration-seconds 720 --evidence-dir "$RUNNER_TEMP/enterprise-browser-soak"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -165,6 +176,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       - name: Three independent COMMAND UI repetition cycles
+        timeout-minutes: 7
         if: ${{ !cancelled() }}
         shell: bash
         run: |
