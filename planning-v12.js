@@ -942,7 +942,7 @@
       || null;
   }
 
-  async function applySelected() {
+  async function applySelected(options = {}) {
     const plan = currentCandidate();
     if (!plan) throw new Error("请先生成并选择候选方案。");
     if (!state.scenario) throw new Error("当前场景已失效，请重新生成。");
@@ -951,7 +951,6 @@
     }
     const verification = await window.STCTVerifier.verify(plan, state.scenario);
     if (verification.status === "FAIL") throw new Error(`方案验证失败：${verification.hardViolationCount} 个硬约束，${verification.metricMismatchCount} 个指标差异。`);
-    if (!state.beforeApply) state.beforeApply = clone(window.STCTCore?.getData?.() || window.DATA || window.FLOWMAP_DATA);
     const applied = verification.recomputedPlan;
     applied.verification = { ...verification, recomputedPlan: undefined };
     applied.meta = {
@@ -963,6 +962,10 @@
     };
     applied.scenarioId = state.scenario.scenarioId;
     applied.inputHash = state.scenario.inputHash;
+    // COMMAND must finish validating/adopting its operational projection before
+    // this verified plan replaces the original dispatch data or apply receipt.
+    if (options.beforeApply) await options.beforeApply(applied);
+    if (!state.beforeApply) state.beforeApply = clone(window.STCTCore?.getData?.() || window.DATA || window.FLOWMAP_DATA);
     (window.STCTCore?.applyPlan || window.applyUploadedData)(applied);
     state.appliedPlanId = plan.planId;
     state.appliedScenarioId = plan.planId;

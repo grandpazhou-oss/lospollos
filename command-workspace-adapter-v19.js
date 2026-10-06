@@ -444,11 +444,13 @@
         return recordAction(action, { status: "COMPLETED", candidates: (await optimizer.generateScenarios({})).length });
       }
       if (action === "dispatch-apply") {
-        const applied = await context.planning()?.applySelected?.();
-        // The operational snapshot is a JSON contract; legacy verification may contain omitted optional fields.
-        const operationalPlan = JSON.parse(JSON.stringify({ ...applied, providerProvenance: applied.providerProvenance ?? null, matrixHash: applied.matrixHash ?? null }));
-        const transition = context.adoptAppliedPlan(operationalPlan, { policy: "RESET_EXECUTION", reason: "USER_APPLIED_VERIFIED_PLAN" });
-        if (transition.status !== "ADOPTED") throw Object.assign(new Error(transition.code), { code: transition.code });
+        let transition;
+        const applied = await context.planning()?.applySelected?.({ beforeApply: (verifiedPlan) => {
+          // The operational snapshot is a JSON contract; legacy verification may contain omitted optional fields.
+          const operationalPlan = JSON.parse(JSON.stringify({ ...verifiedPlan, providerProvenance: verifiedPlan.providerProvenance ?? null, matrixHash: verifiedPlan.matrixHash ?? null }));
+          transition = context.adoptAppliedPlan(operationalPlan, { policy: "RESET_EXECUTION", reason: "USER_APPLIED_VERIFIED_PLAN" });
+          if (transition.status !== "ADOPTED") throw Object.assign(new Error(transition.code), { code: transition.code });
+        } });
         return recordAction(action, { status: "APPLIED_AND_ADOPTED", planHash: applied.planHash, transition });
       }
       if (action === "dispatch-restore") return recordAction(action, context.planning()?.restore?.());

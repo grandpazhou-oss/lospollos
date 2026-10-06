@@ -260,8 +260,12 @@ class CommandSuite(Suite):
         final = self.wait(lambda s: s['manual']['revision'] == 1)
         manual_hash = final['manual']['plan']['planHash']
         page.locator('#applyScenarioBtn').click()
-        self.wait(lambda s: s['phase'] == 'applied' and
-                  (last_action(page) or {}).get('result', {}).get('status') == 'APPLIED_AND_ADOPTED')
+        def applied_and_adopted(value):
+            action = last_action(page) or {}
+            if action.get('type') == 'dispatch-apply' and action.get('result', {}).get('status') == 'FAILED':
+                raise AssertionError('COMMAND adoption failed after dispatch apply: ' + json.dumps(action))
+            return value['phase'] == 'applied' and action.get('result', {}).get('status') == 'APPLIED_AND_ADOPTED'
+        self.wait(applied_and_adopted)
         applied = applied_identity(page)
         assert applied['planHash'] == manual_hash and applied['verification'] == 'PASS'
         assert applied['inputHash'] == final['scenario']['inputHash']

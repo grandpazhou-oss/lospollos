@@ -72,15 +72,21 @@
     const sourceScenario = clone(appliedPlan?.meta?.scenarioSnapshot || appliedPlan?.scenario || {});
     const sourceOrders = new Map((sourceScenario.orders || []).map((order) => [text(order.id || order.orderId || order.code), order]));
     const routes = (appliedPlan?.routes || []).map((route, routeIndex) => {
-      const geometry = clone(route.geometry || route.routeGeometry || route.coordinates || []);
-      const fallback = [121.45 + routeIndex * 0.002, 31.2 + routeIndex * 0.001];
+      const routeId = text(route.routeId || `APPLIED-R${String(routeIndex + 1).padStart(2, "0")}`);
+      const features = (appliedPlan.routeGeoJson?.features || []).filter((feature) => text(feature.properties?.routeId) === routeId);
+      const geometry = clone(features.length === 1 ? features[0].geometry?.coordinates : route.geometry || route.routeGeometry || route.coordinates || []);
+      if (features.length > 1 || (features.length === 1 && features[0].geometry?.type !== "LineString")
+        || !Array.isArray(geometry) || geometry.length < 2
+        || geometry.some((point) => !Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite) || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90)) {
+        throw Object.assign(new Error(`Applied route ${routeId} requires unambiguous real LineString geometry`), { code: "APPLIED_ROUTE_GEOMETRY_INVALID" });
+      }
       return {
         ...clone(route),
-        routeId: text(route.routeId || `APPLIED-R${String(routeIndex + 1).padStart(2, "0")}`),
+        routeId,
         vehicleId: text(route.vehicleId || route.vehicle?.id || `APPLIED-V${String(routeIndex + 1).padStart(2, "0")}`),
         revision: Number(route.revision || appliedPlan.revision || 1),
         orderIds: clone(route.orderIds || route.orders?.map((order) => text(order.id || order.orderId || order.code)) || []),
-        geometry: geometry.length ? geometry : [fallback, [fallback[0] + 0.001, fallback[1] + 0.001]],
+        geometry,
       };
     });
     const stops = routes.flatMap((route) => route.orderIds.map((orderId, stopIndex) => {
@@ -172,14 +178,15 @@
     scenario.routes.slice(0, 2).forEach((route, index) => {
       appendSeedEvent(store, run, { eventType: "ROUTE_ACCEPTED", routeId: route.routeId, vehicleId: route.vehicleId, logicalTime: 102 + index * 5 });
       appendSeedEvent(store, run, { eventType: "VEHICLE_DEPARTED", routeId: route.routeId, vehicleId: route.vehicleId, logicalTime: 103 + index * 5 });
+      const coordinate = route.geometry[Math.min(3, route.geometry.length - 1)];
       appendSeedEvent(store, run, {
         eventType: "POSITION_RECORDED",
         routeId: route.routeId,
         vehicleId: route.vehicleId,
-        coordinate: route.geometry[3],
+        coordinate,
         roadEdgeId: `P3-EDGE-${route.routeId}`,
         logicalTime: 104 + index * 5,
-        payload: { derivedTelemetryHash: dependencies.Integrity.hashValue({ routeId: route.routeId, point: route.geometry[3] }), telemetryStatus: "PASS" },
+        payload: { derivedTelemetryHash: dependencies.Integrity.hashValue({ routeId: route.routeId, point: coordinate }), telemetryStatus: "PASS" },
       });
       if (index === 0) {
         const orderId = route.orderIds[0];
@@ -264,27 +271,35 @@
     }
 
     function rebuildSession(nextScenario, nextPlan, sourceType) {
-      scenario = clone(nextScenario);
-      plan = clone(nextPlan);
-      contextSource = sourceType;
-      alertStore = dependencies.Alerts.createInbox();
-      workspace = dependencies.Workspace.createWorkspace({ appliedPlan: plan, alertStore, locale: workspace.snapshot().locale });
-      workspace.createExecutionFromPlan(plan, { scenarioId: `SCENARIO-${scenario.scenarioHash.slice(-12)}`, inputHash: scenario.scenarioHash, noWebGL });
-      executionStore = workspace.executionStore();
-      run = executionStore.snapshot().run;
-      if(plan.sourceGate!=="P5_DATA_DRAFT")seedExecution(executionStore, run, scenario);
-      replay = workspace.createFleetReplay(scenario);
-      simulationStore = dependencies.Simulation.createSimulationStore();
-      simulationReady = simulationStore.initialize(plan);
-      recovery = recoveryFixture(plan, run.executionRunHash, executionStore.snapshot().executionStateHash);
-      workspace.attachRecoverySession(recovery.session);
-      workspace.ingestRecoveryPool(recovery.pool);
-      offlineQueue = dependencies.OfflineQueue.createQueue();
-      incidents = [];
-      localReviewNotes = new Map();
-      selected = { routeId: scenario.routes[0]?.routeId || "", vehicleId: scenario.routes[0]?.vehicleId || "", orderId: "", stopId: "", alertId: "", incidentId: "" };
-      driver = dependencies.Driver.create({ run, plan, store: executionStore, queue: offlineQueue, inbox: alertStore, vehicleId: scenario.routes[Math.min(2, scenario.routes.length - 1)].vehicleId });
-      seedAlerts();
+      // All new authorities are local to this synchronous rebuild. If preparation
+      // fails, retain every prior session reference instead of a mixed context.
+      const previous = { scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver };
+      try {
+        scenario = clone(nextScenario);
+        plan = clone(nextPlan);
+        contextSource = sourceType;
+        alertStore = dependencies.Alerts.createInbox();
+        workspace = dependencies.Workspace.createWorkspace({ appliedPlan: plan, alertStore, locale: workspace.snapshot().locale });
+        workspace.createExecutionFromPlan(plan, { scenarioId: `SCENARIO-${scenario.scenarioHash.slice(-12)}`, inputHash: scenario.scenarioHash, noWebGL });
+        executionStore = workspace.executionStore();
+        run = executionStore.snapshot().run;
+        if(plan.sourceGate!=="P5_DATA_DRAFT")seedExecution(executionStore, run, scenario);
+        replay = workspace.createFleetReplay(scenario);
+        simulationStore = dependencies.Simulation.createSimulationStore();
+        simulationReady = simulationStore.initialize(plan);
+        recovery = recoveryFixture(plan, run.executionRunHash, executionStore.snapshot().executionStateHash);
+        workspace.attachRecoverySession(recovery.session);
+        workspace.ingestRecoveryPool(recovery.pool);
+        offlineQueue = dependencies.OfflineQueue.createQueue();
+        incidents = [];
+        localReviewNotes = new Map();
+        selected = { routeId: scenario.routes[0]?.routeId || "", vehicleId: scenario.routes[0]?.vehicleId || "", orderId: "", stopId: "", alertId: "", incidentId: "" };
+        driver = dependencies.Driver.create({ run, plan, store: executionStore, queue: offlineQueue, inbox: alertStore, vehicleId: scenario.routes[Math.min(2, scenario.routes.length - 1)].vehicleId });
+        seedAlerts();
+      } catch (error) {
+        ({ scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver } = previous);
+        throw error;
+      }
     }
 
     function adoptAppliedPlan(appliedPlan, transition = {}) {
