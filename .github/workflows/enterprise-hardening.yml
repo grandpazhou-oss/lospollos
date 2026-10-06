@@ -44,7 +44,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-core-${{ matrix.os }}
+          name: enterprise-core-${{ matrix.os }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-core
           retention-days: 7
           if-no-files-found: warn
@@ -95,7 +95,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-native-browser
+          name: enterprise-native-browser-attempt-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/enterprise-native
             ${{ runner.temp }}/enterprise-browser
@@ -137,8 +137,20 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-native-preflight
+          name: enterprise-native-preflight-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-soak-preflight/native
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Fixed large native profile preflight (not a completed soak)
+        id: native_fixed_smoke
+        timeout-minutes: 5
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_native_soak.py --workload-profile fixed-large --duration-seconds 90 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/native-fixed"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-native-fixed-preflight-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-soak-preflight/native-fixed
           retention-days: 7
           if-no-files-found: warn
       - name: Browser soak harness preflight (not a completed soak)
@@ -149,18 +161,18 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-soak-preflight
+          name: enterprise-soak-preflight-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-soak-preflight
           retention-days: 7
           if-no-files-found: warn
-      - name: Thirty-minute real native progressive load and lifecycle soak
+      - name: Thirty-one-minute fixed large native load without backend restart
         timeout-minutes: 36
-        if: ${{ !cancelled() && steps.native_smoke.outcome == 'success' }}
-        run: python tests/test_enterprise_native_soak.py --duration-seconds 1800 --evidence-dir "$RUNNER_TEMP/enterprise-native-soak"
+        if: ${{ !cancelled() && steps.native_smoke.outcome == 'success' && steps.native_fixed_smoke.outcome == 'success' }}
+        run: python tests/test_enterprise_native_soak.py --workload-profile fixed-large --duration-seconds 1860 --evidence-dir "$RUNNER_TEMP/enterprise-native-soak"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-native-soak
+          name: enterprise-native-fixed-soak-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-native-soak
           retention-days: 7
           if-no-files-found: warn
@@ -171,7 +183,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-browser-soak
+          name: enterprise-browser-soak-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-browser-soak
           retention-days: 7
           if-no-files-found: warn
@@ -186,7 +198,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-command-repeat
+          name: enterprise-command-repeat-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-command-repeat
           retention-days: 7
           if-no-files-found: warn

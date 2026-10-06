@@ -33,6 +33,8 @@ JOB_ROUTE = '/supply-chain-jobs-v6'
 TERMINAL = {'COMPLETE', 'PARTIAL', 'CANCELLED', 'FAILED'}
 PROTECTED_PORTS = {8787, 8877, 8791, 8766, 8788, 19095}
 LIMITS = {'rssBytes': 1024 ** 3, 'fds': 512, 'threads': 64, 'workers': 1}
+WORKLOAD_PROFILES = ('progressive', 'fixed-large')
+PROGRESSIVE_LEVELS = ((10, 2, 1), (50, 5, 2), (200, 10, 4))
 
 # Observation only: no solver, gate, request or result functions are replaced.
 # Each process uses the real entrypoint. flock gives cross-process total ordering
@@ -71,6 +73,49 @@ if _path and _root:
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
+
+
+def select_workload(profile, duration_seconds, elapsed_seconds, iteration):
+    require(profile in WORKLOAD_PROFILES, 'Unknown workload profile: ' + profile)
+    if profile == 'fixed-large':
+        return PROGRESSIVE_LEVELS[-1]
+    stage = min(2, int(elapsed_seconds / max(1, duration_seconds / 3)))
+    # Preserve the progressive smoke's visit to every scale.
+    if duration_seconds < 1800:
+        stage = iteration % 3
+    return PROGRESSIVE_LEVELS[stage]
+
+
+def profile_scope(profile, duration_seconds):
+    fixed = profile == 'fixed-large'
+    require(profile in WORKLOAD_PROFILES, 'Unknown workload profile: ' + profile)
+    return {'workloadProfile': profile,
+            'requiredShapes': ['200x10'] if fixed else ['10x2', '50x5', '200x10'],
+            'requiredClientLevels': [4] if fixed else [1, 2, 4],
+            'minimumUninterruptedBackendSeconds': duration_seconds if fixed else (900 if duration_seconds >= 1800 else 0),
+            'excludedCoverage': ({'cross_size': 'NOT_RUN_PROFILE_EXCLUDED',
+                                  'cross_client_level': 'NOT_RUN_PROFILE_EXCLUDED',
+                                  'backend_restart': 'NOT_RUN_PROFILE_EXCLUDED',
+                                  'old_job_404_after_restart': 'NOT_RUN_PROFILE_EXCLUDED'} if fixed else {})}
+
+
+def completion_status(duration_seconds):
+    return 'PASS' if duration_seconds >= 1800 else 'SMOKE_PASS_NOT_30_MINUTE_SOAK'
+
+
+def sampled_resources(processes):
+    """All totals and PID rows describe the same captured process snapshots."""
+    live = [row for row in processes if row['state'] != 'Z']
+    require(all(row.get('resourcesReadable') is True and
+                all(row.get(key) is not None for key in ('rssBytes', 'fds', 'threads')) for row in live),
+            'PROC_OBSERVER_LIVE_RESOURCE_FIELDS_MISSING')
+    return {**{key: sum(row[key] for row in live) for key in ('rssBytes', 'fds', 'threads')},
+            'workers': sum(row['role'] == 'worker' for row in live),
+            'resourceScope': 'MEASURED_LIVE_OWNED_PROCESSES_ONLY',
+            'measuredLivePids': [row['pid'] for row in live],
+            'stateOnlyExitedPids': [row['pid'] for row in processes if row['state'] == 'Z'],
+            'pids': [{key: row[key] for key in ('pid', 'ppid', 'startTicks', 'role', 'state', 'rssBytes', 'fds', 'threads')}
+                     for row in processes]}
 
 
 class ProcObserverError(RuntimeError):
@@ -329,6 +374,7 @@ class Evidence:
 class NativeSoak:
     def __init__(self, args, evidence):
         self.args, self.evidence = args, evidence
+        self.auxiliary_shape = (200, 10) if args.workload_profile == 'fixed-large' else (10, 2)
         self.port = choose_port(args.port)
         self.backend = None
         self.backend_identity = None
@@ -515,23 +561,14 @@ class NativeSoak:
             while not self.monitor_stop.is_set():
                 require(not self.boundary_path.with_name(self.boundary_path.name + '.observer-error').exists(),
                         'NATIVE_OBSERVER_ERROR: inspect the external observer marker')
-                workers = self.capture_workers()
+                self.capture_workers()
                 self.inspect_boundaries()
                 with self.owned_lock:
-                    processes = [current for identity in self.owned.values()
+                    processes = [{**current, 'role': identity['role']} for identity in self.owned.values()
                                  if (current := self.snapshot(identity['pid'])) and same_process(identity, current)]
-                live_processes = [p for p in processes if p['state'] != 'Z']
                 sample = {'elapsedSeconds': round(time.monotonic() - self.evidence.start, 3),
                           'monoNs': time.monotonic_ns(), 'instanceId': self.instance,
-                          'rssBytes': sum(p['rssBytes'] for p in live_processes),
-                          'fds': sum(p['fds'] for p in live_processes),
-                          'threads': sum(p['threads'] for p in live_processes),
-                          'workers': sum(p['state'] != 'Z' for p in workers),
-                          'resourceScope': 'MEASURED_LIVE_OWNED_PROCESSES_ONLY',
-                          'measuredLivePids': [p['pid'] for p in live_processes],
-                          'stateOnlyExitedPids': [p['pid'] for p in processes if p['state'] == 'Z'],
-                          'pids': [{k: p[k] for k in ('pid', 'ppid', 'startTicks', 'state', 'rssBytes', 'fds', 'threads')}
-                                   for p in processes]}
+                          **sampled_resources(processes)}
                 self.evidence.sample(sample)
                 for key, limit in LIMITS.items():
                     require(sample[key] <= limit, f'SAFETY_LIMIT_{key}: {sample[key]} > {limit}')
@@ -644,6 +681,8 @@ class NativeSoak:
         return True
 
     def load_cycle(self, demands, sites, clients):
+        if self.args.workload_profile == 'fixed-large':
+            require((demands, sites, clients) == (200, 10, 4), 'Fixed-large workload shape/client drift')
         shape = f'{demands}x{sites}'
         sequence = self.next_sequence()
         values = make_payloads(demands, sites, sequence)
@@ -743,7 +782,7 @@ class NativeSoak:
         # Explicit fault injection freezes only our worker, creating a deterministic
         # admission collision. This is NEVER counted as a native math success.
         require(self.signal_owned(pid, signal.SIGSTOP, 'deterministic_busy_fault_window'), 'Worker exited before stop')
-        other = make_payloads(10, 2, self.next_sequence())
+        other = make_payloads(*self.auxiliary_shape, self.next_sequence())
         try:
             for route in ROUTES:
                 status, reply = self.request(route, other[route])
@@ -770,7 +809,7 @@ class NativeSoak:
         self.await_idle()
 
     def disconnect(self):
-        payload = make_payloads(10, 2, self.next_sequence())['/optimize']
+        payload = make_payloads(*self.auxiliary_shape, self.next_sequence())['/optimize']
         raw = json.dumps(payload, separators=(',', ':')).encode()
         request = (f'POST /optimize HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n'
                    f'Content-Type: application/json\r\nContent-Length: {len(raw)}\r\nConnection: close\r\n\r\n').encode() + raw
@@ -818,6 +857,7 @@ class NativeSoak:
         raise AssertionError('Disconnected native solve did not release admission')
 
     def restart(self):
+        require(self.args.workload_profile == 'progressive', 'Fixed-large forbids backend restart')
         spec, started = self.new_fault_job()
         job_id = started['jobId']
         value = self.wait_worker(job_id)
@@ -879,24 +919,44 @@ class NativeSoak:
     def assert_coverage(self, active_seconds):
         counts = self.evidence.counts
         full = self.args.duration_seconds >= 1800
+        fixed = self.args.workload_profile == 'fixed-large'
+        scope = profile_scope(self.args.workload_profile, self.args.duration_seconds)
         require(active_seconds >= self.args.duration_seconds, 'Active workload window ended early')
         require(counts['cycles'] >= (30 if full else 3), 'Insufficient mixed business load cycles')
-        for label in ('10x2', '50x5', '200x10'):
+        successes = (30 if full else 3) if fixed else (3 if full else 1)
+        for label in scope['requiredShapes']:
             for route in ROUTES:
-                require(counts[f'native_success:{route}:{label}'] >= (3 if full else 1), 'Missing native route/shape success: ' + route + ':' + label)
+                require(counts[f'native_success:{route}:{label}'] >= successes, 'Missing native route/shape success: ' + route + ':' + label)
             for kind in ('FACILITY', 'JOINT'):
-                require(counts[f'native_success:job:{kind}:{label}'] >= (3 if full else 1), 'Missing native job/shape success: ' + kind + ':' + label)
-        for clients in (1, 2, 4):
+                require(counts[f'native_success:job:{kind}:{label}'] >= successes, 'Missing native job/shape success: ' + kind + ':' + label)
+        for clients in scope['requiredClientLevels']:
             require(counts[f'client_level:{clients}'] > 0, 'Missing client concurrency level')
+        if fixed:
+            require(counts['shape_cycles:200x10'] == counts['cycles'] and counts['client_level:4'] == counts['cycles'],
+                    'Fixed-large must keep every mixed cycle at 200x10 with four clients')
+            require(not any(counts[key] for key in ('shape_cycles:10x2', 'shape_cycles:50x5',
+                                                    'client_level:1', 'client_level:2')),
+                    'Fixed-large cannot claim cross-size/client-level coverage')
         for route in (*ROUTES, JOB_ROUTE):
             require(counts['429:' + route] >= (3 if full else 1), 'Missing actual HTTP429 coverage: ' + route)
-        for key, minimum in {'cancel_start_race': 6 if full else 1, 'cancel_solving': 3 if full else 1,
-                             'worker_abnormal_exits': 3 if full else 1, 'disconnect_recoveries': 3 if full else 1,
-                             'backend_restarts': 1, 'old_job_404_after_restart': 1,
-                             'bounded_retention_checks': 3 if full else 1}.items():
+        minimum_faults = {'cancel_start_race': 6 if full else 1, 'cancel_solving': 3 if full else 1,
+                          'worker_abnormal_exits': 3 if full else 1, 'disconnect_recoveries': 3 if full else 1,
+                          'bounded_retention_checks': 3 if full else 1}
+        if fixed:
+            minimum_faults['repeat_cancel'] = 18 if full else 4
+            require(counts['backend_restarts'] == counts['old_job_404_after_restart'] == 0,
+                    'Fixed-large backend restart scenarios must remain excluded')
+        else:
+            minimum_faults.update(backend_restarts=1, old_job_404_after_restart=1)
+        for key, minimum in minimum_faults.items():
             require(counts[key] >= minimum, f'Missing fault/retention coverage {key}: {counts[key]} < {minimum}')
         require(counts['resource_samples'] >= int(self.args.duration_seconds * 2), 'Insufficient resource sample coverage')
-        if full:
+        if fixed:
+            instrumented = [row for row in self.generations if row['instrumented']]
+            require(len(instrumented) == 1, 'Fixed-large requires exactly one instrumented backend instance')
+            require(instrumented[0].get('uptimeSeconds', 0) >= scope['minimumUninterruptedBackendSeconds'],
+                    'Fixed-large backend did not remain uninterrupted for the full active target')
+        elif full:
             require(max(row.get('uptimeSeconds', 0) for row in self.generations) >= 900,
                     'No uninterrupted backend segment lasted at least 15 minutes')
         require(self.evidence.summary.get('maxNativeConcurrency') == 1, 'Native solver boundary observation missing')
@@ -925,7 +985,7 @@ class NativeSoak:
         # A same-checkout, unobserved real-native success establishes that the
         # observer is not replacing computation. These are not timing SLA claims.
         self.start_backend(instrumented=False)
-        control = make_payloads(10, 2, self.next_sequence())['/facility-optimize-v19']
+        control = make_payloads(*self.auxiliary_shape, self.next_sequence())['/facility-optimize-v19']
         started = time.monotonic()
         status, result = self.request('/facility-optimize-v19', control)
         require(status == 200, 'Uninstrumented native control failed')
@@ -940,16 +1000,16 @@ class NativeSoak:
         self.start_backend()
         self.monitor.start()
         active_start = time.monotonic()
-        self.evidence.event('active_window_started', targetSeconds=self.args.duration_seconds)
+        active_identity, active_instance = dict(self.backend_identity), self.instance
+        fixed = self.args.workload_profile == 'fixed-large'
+        self.evidence.event('active_window_started', targetSeconds=self.args.duration_seconds,
+                            workloadProfile=self.args.workload_profile, instanceId=active_instance,
+                            pid=active_identity['pid'], startTicks=active_identity['startTicks'])
         iteration = 0
         restarted = False
         while time.monotonic() - active_start < self.args.duration_seconds or iteration < 3:
             elapsed = time.monotonic() - active_start
-            stage = min(2, int(elapsed / max(1, self.args.duration_seconds / 3)))
-            # A short smoke still visits all three scales; no shortened run claims 30-minute PASS.
-            if self.args.duration_seconds < 1800:
-                stage = iteration % 3
-            demands, sites, clients = ((10, 2, 1), (50, 5, 2), (200, 10, 4))[stage]
+            demands, sites, clients = select_workload(self.args.workload_profile, self.args.duration_seconds, elapsed, iteration)
             self.evidence.event('cycle_started', cycle=iteration + 1, demands=demands, sites=sites, clients=clients)
             self.load_cycle(demands, sites, clients)
             if iteration % 3 == 0:
@@ -959,25 +1019,27 @@ class NativeSoak:
             if iteration % 7 == 2:
                 self.collide_and_kill(clients)
                 self.disconnect()
-            if not restarted and elapsed >= self.args.duration_seconds * .75:
+            if not fixed and not restarted and elapsed >= self.args.duration_seconds * .75:
                 self.restart()
                 restarted = True
             iteration += 1
             self.evidence.save(activeSeconds=round(time.monotonic()-active_start, 3), cycles=iteration)
         # Complete missing bounded fault observations, never replace load with sleep.
-        if not restarted:
+        if not fixed and not restarted:
             self.restart()
         for key, callback in [('cancel_start_race', self.cancel_race), ('cancel_solving', lambda: self.cancel_race(solving=True)),
                               ('worker_abnormal_exits', lambda: self.collide_and_kill(4)), ('disconnect_recoveries', self.disconnect)]:
             deadline = time.monotonic() + 30
-            while self.evidence.counts[key] < 1:
+            minimum = (6 if key == 'cancel_start_race' else 3) if fixed and self.args.duration_seconds >= 1800 else 1
+            while self.evidence.counts[key] < minimum:
                 require(time.monotonic() < deadline, 'Could not observe required fault window: ' + key)
                 callback()
-        if self.evidence.counts['bounded_retention_checks'] < 1:
+        retention_minimum = 3 if fixed and self.args.duration_seconds >= 1800 else 1
+        while self.evidence.counts['bounded_retention_checks'] < retention_minimum:
             # A shortened native smoke still fills the real retained-result table.
             # These are active native requests, not a substituted fixed wait.
             for _ in range(20):
-                value = make_payloads(10, 2, self.next_sequence())['/facility-optimize-v19']
+                value = make_payloads(*self.auxiliary_shape, self.next_sequence())['/facility-optimize-v19']
                 require(self.execute_work((JOB_ROUTE, make_job(value, self.next_sequence()), True), 'retention_probe'),
                         'Retention probe unexpectedly encountered backpressure')
                 self.await_idle()
@@ -987,14 +1049,18 @@ class NativeSoak:
         # then stop/join it before final assertions and owned cleanup.
         self.monitor_stop.set()
         self.monitor.join(timeout=3)
+        self.check()
         self.inspect_boundaries()
         self.generations[-1]['uptimeSeconds'] = time.monotonic() - self.backend_started
         active_seconds = time.monotonic() - active_start
+        if fixed:
+            require(same_process(active_identity) and self.backend.poll() is None and self.instance == active_instance,
+                    'Fixed-large active backend identity did not survive the full window')
         self.assert_coverage(active_seconds)
         self.evidence.event('active_window_finished', activeSeconds=round(active_seconds, 3), cycles=iteration)
-        return {'status': 'PASS' if self.args.duration_seconds >= 1800 else 'SMOKE_PASS_NOT_30_MINUTE_SOAK',
+        return {'status': completion_status(self.args.duration_seconds),
                 'activeSeconds': round(active_seconds, 3), 'generations': self.generations,
-                'idlePlatformWindows': self.plateau_report(), 'minimumUninterruptedBackendSeconds': 900 if self.args.duration_seconds >= 1800 else 0,
+                'idlePlatformWindows': self.plateau_report(), **profile_scope(self.args.workload_profile, self.args.duration_seconds),
                 'coverageAssertionsPassed': True}
 
     def cleanup(self):
@@ -1183,6 +1249,145 @@ def controlled_race_self_test():
     return {'evidenceClass': 'CONTROLLED_STATE_MACHINE_NOT_NATIVE', 'checks': checked}
 
 
+def workload_profile_self_test():
+    """Pure selection and qualification fixtures, never native coverage."""
+    checked = []
+    for duration in (90, 1800, 1860):
+        for elapsed, iteration in ((0, 0), (duration / 3, 1), (duration * .8, 2), (duration, 5)):
+            require(select_workload('fixed-large', duration, elapsed, iteration) == (200, 10, 4),
+                    'Fixed-large selection changed with time or cycle')
+    checked.append('fixed_large_pins_all_cycles')
+    require([select_workload('progressive', 1800, elapsed, 0) for elapsed in (0, 600, 1200, 1800)] ==
+            [*PROGRESSIVE_LEVELS, PROGRESSIVE_LEVELS[-1]], 'Progressive full schedule changed')
+    require([select_workload('progressive', 90, 0, iteration) for iteration in range(6)] ==
+            list(PROGRESSIVE_LEVELS) * 2, 'Progressive smoke schedule changed')
+    checked.append('progressive_full_and_smoke_selection_preserved')
+    try:
+        select_workload('unknown', 1800, 0, 0)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('Unknown profile accepted')
+    checked.append('unknown_profile_rejected')
+
+    def fixture(profile='fixed-large', duration=1800):
+        full, fixed = duration >= 1800, profile == 'fixed-large'
+        runner = NativeSoak.__new__(NativeSoak)
+        runner.args = argparse.Namespace(workload_profile=profile, duration_seconds=duration)
+        counts = Counter(cycles=30 if full else 3, resource_samples=int(duration * 2),
+                         cancel_start_race=6 if full else 1, cancel_solving=3 if full else 1,
+                         worker_abnormal_exits=3 if full else 1, disconnect_recoveries=3 if full else 1,
+                         bounded_retention_checks=3 if full else 1, repeat_cancel=18 if full else 4)
+        for route in (*ROUTES, JOB_ROUTE):
+            counts['429:' + route] = 3 if full else 1
+        scope = profile_scope(profile, duration)
+        for shape in scope['requiredShapes']:
+            counts['shape_cycles:' + shape] = counts['cycles'] if fixed else counts['cycles'] // 3
+            for workload in (*ROUTES, 'job:FACILITY', 'job:JOINT'):
+                counts[f'native_success:{workload}:{shape}'] = counts['cycles'] if fixed else (3 if full else 1)
+        for clients in scope['requiredClientLevels']:
+            counts[f'client_level:{clients}'] = counts['cycles'] if fixed else counts['cycles'] // 3
+        if not fixed:
+            counts.update(backend_restarts=1, old_job_404_after_restart=1)
+        runner.evidence = argparse.Namespace(counts=counts, summary={'maxNativeConcurrency': 1})
+        runner.generations = [{'instrumented': False, 'uptimeSeconds': 10000},
+                              {'instrumented': True, 'uptimeSeconds': duration}]
+        runner.boundaries = BoundaryLedger()
+        return runner
+
+    def rejects(name, mutate, *, profile='fixed-large', duration=1800, active=None):
+        runner = fixture(profile, duration)
+        mutate(runner)
+        try:
+            runner.assert_coverage(duration if active is None else active)
+        except AssertionError:
+            checked.append(name)
+            return
+        raise AssertionError('Coverage guard accepted: ' + name)
+
+    for profile in WORKLOAD_PROFILES:
+        for duration in (90, 1800, 1860):
+            fixture(profile, duration).assert_coverage(duration)
+    checked.append('both_profiles_accept_only_complete_controlled_coverage')
+    require(completion_status(90) == completion_status(1799) == 'SMOKE_PASS_NOT_30_MINUTE_SOAK'
+            and completion_status(1800) == completion_status(1860) == 'PASS', 'Short run claimed full soak')
+    fixture('fixed-large', 90).assert_coverage(1900)
+    checked.append('short_target_remains_smoke_even_when_actual_run_is_long')
+    rejects('fixed_full_rejects_short_active_window', lambda runner: None, active=1799)
+    rejects('fixed_longer_target_rejects_1800_seconds', lambda runner: None, duration=1860, active=1800)
+    rejects('fixed_rejects_short_instrumented_uptime_despite_long_control',
+            lambda runner: runner.generations[-1].update(uptimeSeconds=1799))
+    rejects('fixed_rejects_second_instrumented_instance',
+            lambda runner: runner.generations.append({'instrumented': True, 'uptimeSeconds': 1800}))
+    rejects('fixed_rejects_no_instrumented_instance', lambda runner: runner.generations.pop())
+    runner = fixture()
+    try:
+        runner.restart()
+    except AssertionError as exc:
+        require(str(exc) == 'Fixed-large forbids backend restart', 'Fixed restart guard did not fail before side effects')
+    else:
+        raise AssertionError('Fixed-large admitted a backend restart')
+    checked.append('fixed_restart_guard_precedes_side_effects')
+    for demands, sites, clients in ((10, 2, 4), (200, 10, 2)):
+        try:
+            runner.load_cycle(demands, sites, clients)
+        except AssertionError as exc:
+            require(str(exc) == 'Fixed-large workload shape/client drift', 'Fixed cycle drift was not rejected immediately')
+        else:
+            raise AssertionError('Fixed-large admitted shape/client drift')
+    checked.append('fixed_cycle_shape_and_clients_guarded_before_execution')
+    rejects('fixed_rejects_insufficient_cycles', lambda runner: runner.evidence.counts.update(cycles=-1))
+    for key in ('backend_restarts', 'old_job_404_after_restart', 'shape_cycles:10x2', 'client_level:1'):
+        rejects('fixed_rejects_excluded_' + key, lambda runner, key=key: runner.evidence.counts.update({key: 1}))
+    for key in ('shape_cycles:200x10', 'client_level:4'):
+        rejects('fixed_rejects_unpinned_' + key, lambda runner, key=key: runner.evidence.counts.update({key: -1}))
+    for workload in (*ROUTES, 'job:FACILITY', 'job:JOINT'):
+        rejects('fixed_requires_genuine_200x10_' + workload,
+                lambda runner, workload=workload: runner.evidence.counts.update({f'native_success:{workload}:200x10': -1}))
+    for key in ('cancel_start_race', 'cancel_solving', 'repeat_cancel', 'worker_abnormal_exits',
+                'disconnect_recoveries', 'bounded_retention_checks', 'resource_samples',
+                *('429:' + route for route in (*ROUTES, JOB_ROUTE))):
+        rejects('fixed_retains_minimum_' + key, lambda runner, key=key: runner.evidence.counts.update({key: -1}))
+    rejects('fixed_retains_native_concurrency_guard', lambda runner: runner.evidence.summary.update(maxNativeConcurrency=2))
+    rejects('fixed_retains_closed_boundary_guard', lambda runner: runner.boundaries.active.update({(1, 1, 1): 1}))
+    for key in ('backend_restarts', 'old_job_404_after_restart', 'native_success:/optimize:10x2',
+                'native_success:job:JOINT:50x5', 'client_level:1'):
+        rejects('progressive_retains_' + key, lambda runner, key=key: runner.evidence.counts.__setitem__(key, 0),
+                profile='progressive')
+    rejects('progressive_retains_900_second_segment',
+            lambda runner: [row.update(uptimeSeconds=899) for row in runner.generations], profile='progressive')
+    fixed_scope = profile_scope('fixed-large', 90)
+    require(set(fixed_scope['excludedCoverage'].values()) == {'NOT_RUN_PROFILE_EXCLUDED'}
+            and not profile_scope('progressive', 1800)['excludedCoverage'], 'Excluded coverage was reported as passed')
+    checked.append('fixed_exclusions_are_explicit_not_passes')
+    return {'evidenceClass': 'CONTROLLED_PROFILE_COVERAGE_NOT_NATIVE', 'checks': checked}
+
+
+def resource_sample_self_test():
+    backend = {'pid': 101, 'ppid': 100, 'startTicks': 7, 'state': 'S', 'role': 'backend',
+               'rssBytes': 1000, 'fds': 8, 'threads': 2, 'resourcesReadable': True}
+    worker = {**backend, 'pid': 102, 'ppid': 101, 'role': 'worker', 'rssBytes': 2000, 'fds': 6, 'threads': 1}
+    zombie = {**worker, 'pid': 103, 'state': 'Z', 'resourcesReadable': False,
+              'rssBytes': None, 'fds': None, 'threads': None}
+    sample = sampled_resources([backend, worker, zombie])
+    require(sample['workers'] == 1 and sample['rssBytes'] == 3000 and sample['fds'] == 14 and sample['threads'] == 3,
+            'Sample totals do not match captured live rows')
+    require(sample['measuredLivePids'] == [101, 102] and sample['stateOnlyExitedPids'] == [103]
+            and sample['pids'][-1]['rssBytes'] is None, 'Exited sample metrics were fabricated or counted as live')
+    require(sample['workers'] == sum(row['role'] == 'worker' and row['state'] != 'Z' for row in sample['pids']),
+            'Worker count does not match sample PID rows')
+    require(sampled_resources([backend, zombie])['workers'] == 0, 'Departed worker left a stale sample count')
+    for field in ('rssBytes', 'fds', 'threads', 'resourcesReadable'):
+        try:
+            sampled_resources([backend, {**worker, field: None}])
+        except AssertionError:
+            continue
+        raise AssertionError('Unreadable live sample metric was ignored: ' + field)
+    return {'evidenceClass': 'CONTROLLED_RESOURCE_ROWS_NOT_NATIVE',
+            'checks': ['worker_count_uses_same_rows', 'live_totals_match_rows', 'exited_metrics_stay_null',
+                       'departed_worker_not_counted', 'unreadable_live_metrics_fail']}
+
+
 def self_test():
     result = payload_self_test()
     require('/optimizer/' in str(ROOT / 'optimizer' / 'ortools_service.py'), 'Bad repository root')
@@ -1236,13 +1441,18 @@ def self_test():
     race_checks = controlled_race_self_test()
     port_checks = port_probe_self_test()
     proc_checks = proc_observer_self_test()
+    workload_checks = workload_profile_self_test()
+    resource_checks = resource_sample_self_test()
     return {'status': 'SELF_TEST_PASS_NOT_NATIVE', 'nativeExecutionVerified': False,
+            'workloadProfileChecks': workload_checks, 'resourceSampleChecks': resource_checks,
             'payloadContracts': result, 'controlledRaceChecks': race_checks, 'portProbeChecks': port_checks, 'procObserverChecks': proc_checks, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected', 'disconnect_requires_owned_active_outer_span', 'disconnect_close_inside_span', 'completed_before_close_is_missed']}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--duration-seconds', type=float, default=1800)
+    parser.add_argument('--workload-profile', choices=WORKLOAD_PROFILES, default='progressive',
+                        help='progressive: three load levels plus restart; fixed-large: 200x10/four clients, no active backend restart')
     parser.add_argument('--evidence-dir', type=Path)
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--expected-ortools', default='9.15.6755')
@@ -1259,6 +1469,7 @@ def main():
     require(args.evidence_dir is not None, '--evidence-dir is required for native execution')
     require(0 < args.duration_seconds <= 7200, '--duration-seconds must be between 0 and 7200')
     evidence = Evidence(args.evidence_dir)
+    evidence.save(**profile_scope(args.workload_profile, args.duration_seconds))
     runner = None
     status = 1
     try:
@@ -1279,6 +1490,7 @@ def main():
         if installed != args.expected_ortools:
             raise BlockedEnvironment(f'Expected OR-Tools {args.expected_ortools}; installed {installed}')
         evidence.event('preflight', payloadContracts=payload_self_test(), durationSeconds=args.duration_seconds,
+                       workloadProfile=args.workload_profile, coverageScope=profile_scope(args.workload_profile, args.duration_seconds),
                        sourceCommit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                        resourceScope='aggregate owned backend and workers, including separate worker sessions',
                        profileMethod='read-only Python solver function entry/exit hooks; unchanged native implementation',
@@ -1312,6 +1524,7 @@ def main():
             except BaseException as cleanup_error:
                 evidence.save(cleanupVerified=False, cleanupFailure=str(cleanup_error))
     print(json.dumps({'status': evidence.summary['status'], 'evidenceDir': str(evidence.directory),
+                      'workloadProfile': args.workload_profile,
                       'nativeExecutionVerified': evidence.summary['nativeExecutionVerified'],
                       'coverage': dict(evidence.counts), 'failure': evidence.summary.get('failure')}, sort_keys=True))
     return status

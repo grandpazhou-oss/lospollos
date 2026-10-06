@@ -1,6 +1,6 @@
 # Sustained validation after the 6caba33 acceptance snapshot
 
-Status: **implemented; hosted sustained execution pending**. This document is a plan, not test evidence.
+Status: **first native progressive window passed at `aaefcfb`; fixed-size continuation pending**. Dated outcomes below are tied to immutable hosted artifacts; the remaining plan is not test evidence.
 
 The completed `6caba338c5a8020848bbdbb7c6bcb51faf94ea51` acceptance artifact remains immutable. Sustained-load evidence belongs to a later exact commit and must not overwrite or retroactively relabel that snapshot. This work follows the user's explicit request to continue testing and stress testing on 2026-10-06.
 
@@ -27,6 +27,22 @@ The completed `6caba338c5a8020848bbdbb7c6bcb51faf94ea51` acceptance artifact rem
 A real-native short smoke and a short browser smoke validate the new harness before long execution; neither qualifies as a completed soak. The read-only workflow runs the sustained job only on pushes to the validation branch after the ordinary checks succeed, avoiding a duplicate long run on the matching PR event. Its job safety timeout is 60 minutes. Evidence is written outside the checkout and uploaded as separate `enterprise-native-soak` and `enterprise-browser-soak` artifacts. Every summary must state actual source SHA, dirty state, duration, cycles, fault counts, observed resource peaks/trends and cleanup outcome. GitHub's seven-day artifact retention is not a permanent backup.
 
 The existing v1.8 six-to-eight-hour overnight harness uses a different Network model and historical run inventories. It is not silently substituted for this service/browser soak, and this first window does not close that historical acceptance item.
+
+### First native window and focused continuation
+
+At `aaefcfbefbebd8465c7668f50e8a4f136550b052`, [run 37408796383](https://github.com/grandpazhou-oss/lospollos/actions/runs/37408796383) completed the native step on 2026-10-06, 03:31:14–04:01:26 UTC. The measured active workload lasted 1808.467 seconds: 343 cycles, 1372 verified synchronous results, 687 verified jobs results and 1561 real HTTP 429 refusals. Replayed native boundaries never exceeded concurrency one. It covered 115 start/cancel races, 69 solving cancellations, 368 repeated cancels, 49 owned-worker abnormal exits, 49 transport-disconnect recoveries and one backend restart. The worker-crash injections reached PREPARING; solving cancellations separately entered the actual Facility solver. Cleanup passed.
+
+The 8203 resource samples peaked at 281,751,552 aggregate RSS bytes, 14 file descriptors, seven threads and one worker. The first backend lived 1372.55 seconds. Its warm-idle first/last means differ by 22,640,640 bytes while workload size changed; that is not sufficient to call a leak. All 69 unmatched solver-entry records close at verified exits from the 69 solving cancellations. A resource-row consistency caveat affected 32 samples: the worker count and PID list were read at different instants. Both reconstructions peak at one; future samples derive the count from the captured rows.
+
+The next experiment uses an explicit `fixed-large` profile: 200 demands, ten sites and four clients for 31 minutes on one uninterrupted backend, assessing at least 30 minutes after its first-minute warm-up. It retains solver/result validation, busy admission, cancellation, worker exit, disconnect and retention checks, but explicitly does not claim cross-size or backend-restart coverage. The original `progressive` CLI profile and its gates remain available unchanged. Both profiles receive short native qualifications before the fixed-size long window in CI. No solver or business constraint changes for this continuation.
+
+CI artifact names include the run attempt so repeated verification has distinct evidence names; uploads do not request overwrite. Downloads must bind artifact ID, digest, exact source SHA and run attempt rather than rely only on a display name. The earlier archive remains separate.
+
+### Browser functional result and unresolved resource trend
+
+The same `aaefcfb` run completed the browser step at 04:13:54 UTC: 724.193 measured seconds, 30 public UI save/conflict/branch/export/reimport cycles, 600 separate native IndexedDB component cycles, 1163 durability/history probes and seven genuine native retries. Functional checks passed. Quota exceptions were controlled transaction fault injection; no physical disk-full test occurred. Three separate COMMAND UI repeats then passed all 11 stages each by 04:16:01 UTC, and the checkout-cleanliness check passed.
+
+Browser stability is **not closed** by that functional PASS. Aggregate RSS peaked at 2,119,540,736 bytes, 98.7% of the unchanged 2 GiB experiment ceiling. End-minus-baseline RSS grew 564,555,776 bytes: Chrome 355,594,240, Python test harness 133,316,608 and Playwright driver 74,977,280 bytes, while service RSS was comparatively stable. All 22 observed owned processes exited normally with no live/zombie residue. The next investigation separates test collection/handle retention, fixed-history reopens and intentional history growth. It must not increase the ceiling or silently equate startup footprint, retained history or test overhead with a confirmed product leak.
 
 ## Unchanged implementation limits
 
