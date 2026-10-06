@@ -42,6 +42,9 @@
   async function route(coords,options={}){
     if(!Array.isArray(coords)||coords.length<2||!coords.every(coordinate))fail('ROAD_COORDINATE_INVALID');
     if(!['WGS84','ASSUMED_WGS84_SCREENING'].includes(options.coordinateUse))fail('ROAD_COORDINATE_SYSTEM_UNCONFIRMED');
+    // Capture request inputs before yielding: caller mutation must not rewrite provenance.
+    coords=coords.map(value=>[...value]);
+    options={...options};
     const config=settings(options),abort=new AbortController(),signal=options.signal;
     let timer,onAbort;
     const stopped=new Promise((_,reject)=>{onAbort=()=>{abort.abort();reject(Object.assign(new Error('ROAD_CANCELLED'),{code:'ROAD_CANCELLED'}));};if(signal?.aborted)onAbort();else signal?.addEventListener('abort',onAbort,{once:true});});

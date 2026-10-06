@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import threading
 import time
 
 
@@ -12,9 +14,25 @@ def emit(value):
     print(json.dumps(value, ensure_ascii=False, separators=(",", ":")), flush=True)
 
 
+def _watch_parent():
+    """The manager keeps stdin open until reap; EOF means ownership was lost.
+
+    Exit the whole process, even when a native solve is still running. This is
+    portable across POSIX and Windows and never targets an unrelated process.
+    """
+    try:
+        # Use the raw descriptor so a blocked daemon never holds a buffered I/O
+        # lock during normal interpreter shutdown.
+        while os.read(sys.stdin.fileno(), 1):
+            pass
+    finally:
+        os._exit(1)
+
+
 def main():
     from supply_chain_jobs_v6 import validate_spec
-    spec = validate_spec(json.load(sys.stdin))
+    spec = validate_spec(json.loads(sys.stdin.readline()))
+    threading.Thread(target=_watch_parent, daemon=True).start()
     import ortools
     from ortools.sat.python import cp_model
     from facility_mvp1 import solve_facility

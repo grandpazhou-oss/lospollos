@@ -1,9 +1,9 @@
 name: Enterprise hardening checks
 on:
   push:
-    branches: [codex/enterprise-hardening-20261006, codex/windows-handoff-map-showcase-20261005]
+    branches: [codex/enterprise-hardening-20261006, codex/enterprise-validation-20261006, codex/windows-handoff-map-showcase-20261005]
   pull_request:
-    branches: [main, codex/windows-handoff-map-showcase-20261005]
+    branches: [main, codex/enterprise-hardening-20261006, codex/windows-handoff-map-showcase-20261005]
 permissions:
   contents: read
 concurrency:
@@ -34,10 +34,17 @@ jobs:
       - name: Core contracts, build pin, storage and admission regression
         shell: bash
         run: python scripts/run_enterprise_checks.py --mode core --output "$RUNNER_TEMP/enterprise-core"
+      - name: Verify checked-out source stayed unchanged
+        if: always()
+        shell: bash
+        run: |
+          git status --short
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git diff --exit-code HEAD --
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-core-${{ matrix.os }}
+          name: enterprise-core-${{ matrix.os }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-core
           retention-days: 7
           if-no-files-found: warn
@@ -65,15 +72,326 @@ jobs:
       - name: CI browser
         run: python -m playwright install --with-deps chromium
       - name: Native IndexedDB across two pages
+        if: ${{ !cancelled() }}
         env:
           STCT_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/enterprise-browser
         run: python scripts/run_enterprise_checks.py --mode browser --output "$RUNNER_TEMP/enterprise-browser"
+      - name: Synthetic DESIGN full UI and independent result review
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_synthetic_full_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-full-ui"
+      - name: Controlled UI faults and genuine native retries
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_ui_faults.py --evidence-dir "$RUNNER_TEMP/enterprise-ui-faults"
+      - name: COMMAND dispatch, manual edits, apply and cancellation
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_command_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-command-ui"
+      - name: Verify checked-out source stayed unchanged
+        if: always()
+        shell: bash
+        run: |
+          git status --short
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git diff --exit-code HEAD --
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-native-browser
+          name: enterprise-native-browser-attempt-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/enterprise-native
             ${{ runner.temp }}/enterprise-browser
+            ${{ runner.temp }}/enterprise-full-ui
+            ${{ runner.temp }}/enterprise-ui-faults
+            ${{ runner.temp }}/enterprise-command-ui
           retention-days: 7
           if-no-files-found: warn
+  stress-soak:
+    name: Bounded additional diagnostic profile
+    # Run once for an explicit validation-branch push, not again on its PR event.
+    if: ${{ !cancelled() && needs.core.result == 'success' && needs['native-browser'].result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/codex/enterprise-validation-20261006' }}
+    needs: [core, native-browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      ENTERPRISE_OBSERVATION_PROFILE: business-ui-gaps-only
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Existing approved dependencies on ephemeral hosted runner
+        run: python -m pip install 'ortools==9.15.6755' 'playwright==1.57.0'
+      - name: Verify runtime identity before additional diagnostic
+        run: python scripts/update_build_identity.py --check
+      - name: Select native long-window scope against verified immutable source
+        id: native_scope
+        timeout-minutes: 2
+        run: |
+          git fetch --no-tags --depth=1 origin 2f29dc0a3348475953d70cac48038fc8648fe95f
+          python scripts/select_enterprise_native_soak.py --self-test
+          python scripts/select_enterprise_native_soak.py --output "$RUNNER_TEMP/enterprise-soak-preflight/native-scope.json"
+      - name: Record explicit additional-diagnostic scope
+        id: observation_scope
+        timeout-minutes: 2
+        run: |
+          python - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'enterprise-soak-preflight'
+          native = json.loads((root / 'native-scope.json').read_text())
+          profile = os.environ['ENTERPRISE_OBSERVATION_PROFILE']
+          assert profile in ('paced-history-recovery', 'wait-path-ab-only', 'ui-wait-mutation-only', 'python-allocation-only', 'business-ui-gaps-only'), profile
+          if profile != 'paced-history-recovery':
+              assert native['nativeLongRequired'] is False, 'Focused browser diagnostics require verified unchanged native source'
+          focused = profile != 'paced-history-recovery'
+          omission = {'wait-path-ab-only': 'NOT_RUN_AB_ONLY', 'ui-wait-mutation-only': 'NOT_RUN_WAIT_REPAIR_ONLY',
+                      'python-allocation-only': 'NOT_RUN_ALLOCATION_ONLY',
+                      'business-ui-gaps-only': 'NOT_RUN_BUSINESS_UI_GAPS_ONLY'}.get(profile)
+          result = {'profile': profile, 'sourceCommit': native['sourceCommit'],
+                    'classification': {'wait-path-ab-only': 'WAIT_IMPLEMENTATION_COMPONENT_DIAGNOSTIC_NOT_PRODUCT_ACCEPTANCE',
+                                       'ui-wait-mutation-only': 'SINGLE_FIXED_UI_WAIT_REPAIR_MUTATION_WINDOW',
+                                       'python-allocation-only': 'MATCHED_PYTHON_ALLOCATION_OBSERVER_DIAGNOSTIC',
+                                       'business-ui-gaps-only': 'TWO_ORIGINAL_ACCEPTANCE_BUSINESS_UI_GAPS',
+                                       'paced-history-recovery': 'HISTORY_RECOVERY_DIAGNOSTIC'}[profile],
+                    'ordinaryCurrentHeadNativeBrowserAndUiChecksRequired': True,
+                    'additionalNativePreflights': omission if focused else 'REQUIRED',
+                    'additionalBrowserPreflights': 'WAIT_REPAIR_SMOKE_REQUIRED' if profile == 'ui-wait-mutation-only' else omission if focused else 'REQUIRED',
+                    'nativeLongWindow': omission if focused else native['status'],
+                    'pacedHistoryLongWindow': omission if focused else 'REQUIRED',
+                    'additionalCommandRepeats': omission if focused else 'REQUIRED',
+                    'waitPathComponentAB': 'REQUIRED' if profile == 'wait-path-ab-only' else 'NOT_RUN_NOT_SELECTED',
+                    'uiWaitMutationWindow': 'REQUIRED_ONCE_720S_30_UI_600_IDB' if profile == 'ui-wait-mutation-only' else 'NOT_RUN_NOT_SELECTED',
+                    'pythonAllocationPair': 'REQUIRED_ONCE_FIXED_FIVE_CYCLE_PREFIX_OFF_ON' if profile == 'python-allocation-only' else 'NOT_RUN_NOT_SELECTED',
+                    'businessUIGaps': ['B6_DELAYED_DURABLE_SAVE_RECEIPT', 'D8_SAME_PAGE_OWNED_BACKEND_RESTART'] if profile == 'business-ui-gaps-only' else 'NOT_RUN_NOT_SELECTED'}
+          (root / 'observation-scope.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result))
+          PYCODE
+      - name: Native harness ownership and coverage guards (not native solving)
+        id: native_harness_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_native_soak.py --self-test --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/harness-guards"
+      - name: Browser diagnostic profile and immutable-history guards (not browser execution)
+        id: browser_harness_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s tests -p test_enterprise_browser_soak.py -v
+      - name: Existing approved Chromium on ephemeral runner
+        if: ${{ !cancelled() }}
+        run: python -m playwright install --with-deps chromium
+      - name: Wait-path A/B pure bounds and result guards (not browser execution)
+        id: wait_path_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'wait-path-ab-only' }}
+        run: python -B tests/test_enterprise_wait_path_ab.py --self-test --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/wait-path-guards"
+      - name: Actual Chromium wait-path A/B with bounded synthetic DOM
+        # 180s external watchdog plus at most 65s verified-process cleanup.
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.wait_path_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_wait_path_ab.py --memory-profile hosted-2gib --generations 32 --idle-seconds 60 --max-wall-seconds 180 --evidence-dir "$RUNNER_TEMP/enterprise-wait-path-ab"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'wait-path-ab-only' }}
+        with:
+          name: enterprise-wait-path-ab-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-wait-path-ab
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Selected visible-wait callback and failure-semantic guards
+        id: visible_wait_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'ui-wait-mutation-only' }}
+        run: python -B -m unittest discover -s tests -p test_enterprise_visible_wait.py -v
+      - name: Repaired UI-wait real-browser short qualification
+        id: visible_wait_smoke
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.visible_wait_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-wait-repair-preflight"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'ui-wait-mutation-only' }}
+        with:
+          name: enterprise-wait-repair-preflight-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-wait-repair-preflight
+          retention-days: 7
+          if-no-files-found: warn
+      - name: One fixed twelve-minute UI-wait repair mutation validation
+        # Original 720s workload, 840s watchdog, at most 65s verified cleanup.
+        timeout-minutes: 16
+        if: ${{ !cancelled() && steps.visible_wait_smoke.outcome == 'success' }}
+        run: python -B tests/test_enterprise_browser_soak.py --workload-profile mutation-soak --memory-profile hosted-2gib --duration-seconds 720 --ui-cycles 30 --storage-cycles 600 --native-every 5 --max-wall-seconds 840 --evidence-dir "$RUNNER_TEMP/enterprise-wait-repair-mutation"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'ui-wait-mutation-only' }}
+        with:
+          name: enterprise-wait-repair-mutation-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-wait-repair-mutation
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Python allocation pair bounds and measurement guards (not browser execution)
+        id: allocation_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'python-allocation-only' }}
+        run: python -B -m unittest discover -s tests -p 'test_enterprise_python_allocation*.py' -v
+      - name: One matched off-on Python allocation prefix pair
+        # Each arm: 150s activity abort gate; 240s process deadline plus <=65s cleanup.
+        # Pair: 660s watchdog, with at most 65s final verified-process cleanup.
+        timeout-minutes: 13
+        if: ${{ !cancelled() && steps.allocation_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_python_allocation.py --evidence-dir "$RUNNER_TEMP/enterprise-python-allocation"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'python-allocation-only' }}
+        with:
+          name: enterprise-python-allocation-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-python-allocation
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Business UI gap bounds and failure guards (not browser execution)
+        id: ui_gap_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'business-ui-gaps-only' }}
+        run: python -B -m unittest discover -s tests -p test_enterprise_ui_acceptance_gaps.py -v
+      - name: B6 delayed genuine durable save receipt and public study switch
+        id: delayed_save_ui
+        timeout-minutes: 6
+        if: ${{ !cancelled() && steps.ui_gap_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_ui_acceptance_gaps.py --case delayed-save --evidence-dir "$RUNNER_TEMP/enterprise-ui-delayed-save"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'business-ui-gaps-only' }}
+        with:
+          name: enterprise-ui-delayed-save-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-ui-delayed-save
+          retention-days: 7
+          if-no-files-found: warn
+      - name: D8 same-page genuine native worker backend restart and retry
+        timeout-minutes: 6
+        if: ${{ !cancelled() && steps.ui_gap_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          try:
+              prior = json.loads((root / 'enterprise-ui-delayed-save' / 'summary.json').read_text())
+              assert prior['status'] in ('PASS', 'FAIL', 'BLOCKED_ENVIRONMENT')
+              cleanup = prior['ownedProcessCleanup']
+              assert cleanup['status'] == 'PASS'
+              assert cleanup['remainingLiveProcesses'] == [] and cleanup['remainingZombies'] == []
+              assert cleanup['forcedTerminationUsed'] is False and cleanup['signalErrors'] == []
+              assert prior['stages']['CLEANUP']['status'] == 'PASS'
+              assert prior['source']['actualSHA'] == source
+              assert prior['source']['dirty'] is False
+          except (OSError, ValueError, KeyError, TypeError, AssertionError):
+              target = root / 'enterprise-ui-backend-restart'
+              target.mkdir(exist_ok=True)
+              (target / 'summary.json').write_text(json.dumps({
+                  'status': 'NOT_RUN', 'reason': 'PRIOR_CASE_OWNERSHIP_CLEANUP_UNCONFIRMED',
+                  'source': {'actualSHA': source}, 'browserStarted': False,
+                  'backendStarted': False}, indent=2) + '\n')
+              print('NOT_RUN: B6 owned-process cleanup must be confirmed before D8 starts')
+              sys.exit(1)
+          PYCODE
+          python -B tests/test_enterprise_ui_acceptance_gaps.py --case backend-restart --evidence-dir "$RUNNER_TEMP/enterprise-ui-backend-restart"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'business-ui-gaps-only' }}
+        with:
+          name: enterprise-ui-backend-restart-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-ui-backend-restart
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Native soak harness preflight (not a completed soak)
+        id: native_smoke
+        timeout-minutes: 5
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.native_harness_guards.outcome == 'success' }}
+        run: python tests/test_enterprise_native_soak.py --duration-seconds 90 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/native"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
+        with:
+          name: enterprise-native-preflight-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-soak-preflight/native
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Fixed large native profile preflight (not a completed soak)
+        id: native_fixed_smoke
+        timeout-minutes: 5
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.native_harness_guards.outcome == 'success' }}
+        run: python tests/test_enterprise_native_soak.py --workload-profile fixed-large --duration-seconds 90 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/native-fixed"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
+        with:
+          name: enterprise-native-fixed-preflight-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-soak-preflight/native-fixed
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Browser soak harness preflight (not a completed soak)
+        id: browser_smoke
+        timeout-minutes: 5
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
+        run: python tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser"
+      - name: Fixed-history browser diagnostic preflight (not a completed control)
+        id: browser_diagnostic_smoke
+        timeout-minutes: 5
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
+        run: python tests/test_enterprise_browser_soak.py --workload-profile fixed-history-recovery --memory-profile hosted-2gib --smoke --ui-cycles 1 --storage-cycles 10 --native-every 1 --fixed-history-seconds 2 --recovery-seconds 2 --seed-max-seconds 60 --max-wall-seconds 180 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser-diagnostic"
+      - name: Paced-history browser diagnostic preflight (not a completed control)
+        id: browser_paced_smoke
+        timeout-minutes: 5
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
+        run: python tests/test_enterprise_browser_soak.py --workload-profile paced-history-recovery --memory-profile hosted-2gib --smoke --duration-seconds 2 --ui-cycles 1 --storage-cycles 10 --native-every 1 --fixed-history-seconds 2 --recovery-seconds 2 --seed-max-seconds 60 --max-wall-seconds 180 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser-paced"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-soak-preflight-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-soak-preflight
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Thirty-one-minute fixed large native load without backend restart
+        timeout-minutes: 36
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.native_smoke.outcome == 'success' && steps.native_fixed_smoke.outcome == 'success' && steps.native_scope.outputs.native_long_required != 'false' }}
+        run: python tests/test_enterprise_native_soak.py --workload-profile fixed-large --duration-seconds 1860 --evidence-dir "$RUNNER_TEMP/enterprise-native-soak"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && steps.native_scope.outputs.native_long_required != 'false' }}
+        with:
+          name: enterprise-native-fixed-soak-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-native-soak
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Paced history seed then fixed-history replay and ordinary idle recovery
+        # 1500s worker watchdog plus at most 65s of verified-process cleanup.
+        timeout-minutes: 27
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_smoke.outcome == 'success' && steps.browser_diagnostic_smoke.outcome == 'success' && steps.browser_paced_smoke.outcome == 'success' }}
+        run: python tests/test_enterprise_browser_soak.py --workload-profile paced-history-recovery --memory-profile hosted-2gib --duration-seconds 720 --fixed-history-seconds 360 --recovery-seconds 180 --seed-max-seconds 900 --max-wall-seconds 1500 --evidence-dir "$RUNNER_TEMP/enterprise-browser-paced-diagnostic"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
+        with:
+          name: enterprise-browser-paced-diagnostic-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-browser-paced-diagnostic
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Three independent COMMAND UI repetition cycles
+        timeout-minutes: 7
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() }}
+        shell: bash
+        run: |
+          for cycle in 1 2 3; do
+            python tests/test_enterprise_command_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-command-repeat/cycle-$cycle"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
+        with:
+          name: enterprise-command-repeat-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-command-repeat
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Verify stress checks did not rewrite source
+        if: always()
+        shell: bash
+        run: |
+          git status --short
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git diff --exit-code HEAD --

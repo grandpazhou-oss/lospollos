@@ -24,8 +24,8 @@ controlled trial**, not an enterprise production release.
   to match. The default age limit is 30 days; configure `roadReuseMaxAgeMs` as needed.
   Missing provenance requires deliberate import/regeneration. Road values remain
   `ESTIMATED_ROAD`; truck restrictions and traffic are still unverified/unmodeled.
-- Runtime manifest verification includes the real worker and all top-level optimizer
-  Python modules. LF checkout rules prevent Windows Git line-ending conversion from
+- Runtime manifest verification includes the real worker and all recursive optimizer
+  Python modules, including nested packages. LF checkout rules prevent Windows Git line-ending conversion from
   invalidating exact-byte hashes.
 
 No solver objective, precision, constraint or verifier tolerance is weakened.
@@ -81,3 +81,10 @@ CI dependency installation happens only on ephemeral hosted runners.
 - Physical Windows operation, real OSRM, private-dataset business acceptance, full UI
   end-to-end and deferred soak still require their own evidence and approval.
 - No branch merge, force push, deployment or existing-service switchover is part of CI.
+
+## Validation and omission repairs — 2026-10-06
+
+The incremental validation candidate is based on hardening commit
+`5a8078ef0547941ded9aadd53fd3d6cf3ee4faeb`, not `main`. See
+[the validation record](docs/ENTERPRISE_VALIDATION_20261006.md) for newly reproduced
+defects, test commands and evidence boundaries. It remains a Draft candidate.

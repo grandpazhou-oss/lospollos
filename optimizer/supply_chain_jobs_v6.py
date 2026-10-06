@@ -244,8 +244,10 @@ class JobManager:
             timer = threading.Timer(float(spec["budgetSeconds"])+3, lambda: self._timeout(job["jobId"]))
             timer.daemon = True
             timer.start()
-            process.stdin.write(json.dumps(spec, ensure_ascii=False, allow_nan=False))
-            process.stdin.close()
+            # Keep the writer open as an ownership pipe. The worker exits if the
+            # backend disappears, including during an in-progress native solve.
+            process.stdin.write(json.dumps(spec, ensure_ascii=False, allow_nan=False) + "\n")
+            process.stdin.flush()
             for line in iter(lambda: process.stdout.readline(MAX_EVENT_CHARS+1), ""):
                 if len(line) > MAX_EVENT_CHARS:
                     raise JobError("SUPPLY_JOB_WORKER_PROTOCOL_INVALID")
@@ -338,7 +340,12 @@ class JobManager:
                 self.admission.release(job["jobId"])
             for stream in (getattr(process, "stdin", None), getattr(process, "stdout", None), getattr(process, "stderr", None)):
                 if stream:
-                    stream.close()
+                    try:
+                        stream.close()
+                    except OSError:
+                        # Cancellation/early exit may leave a buffered stdin
+                        # write to a closed pipe. Still close both read pipes.
+                        pass
 
     def _timeout(self, job_id):
         with self.lock:

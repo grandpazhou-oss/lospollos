@@ -4,7 +4,7 @@ This candidate replaces the historical five-file fingerprint with a generated ru
 manifest. It is an integrity check, **not** a digital signature, trusted attestation,
 credential, full-application hash or proof of business correctness.
 
-`optimizer/build_identity.py` defines the exact scope: all top-level `optimizer/*.py`
+`optimizer/build_identity.py` defines the exact scope: all recursive `optimizer/**/*.py`
 modules (including `supply_chain_job_worker_v6.py` and the identity/admission modules),
 `shared/planning-contract-v13.json`, the local launcher/static server/path allowlist
 implementation, and `public-resources.json`. The generated `optimizer/build-manifest.json`
@@ -12,7 +12,8 @@ contains sorted repository-relative paths, exact file SHA-256 hashes and a combi
 fingerprint over `relative-path UTF-8 + NUL + exact file bytes` for each path in order.
 
 The service refuses startup when the stored manifest differs from recomputed source,
-when a file is missing/invalid, or when a new optimizer Python module is not recorded.
+when a file is missing/invalid, or when a new optimizer Python module or nested package
+is not recorded. Symlinked runtime files or package directories are rejected.
 The launcher uses the same validator. `/health` reports this fingerprint and its scope.
 The browser controller separately checks endpoint, instance, protocol, model and
 capabilities. Both the shipped configuration and standalone controller default to

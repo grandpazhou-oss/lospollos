@@ -146,7 +146,7 @@ def _validate(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[
     return demands, sites, grid
 
 
-def _solve_one(cp_model: Any, payload: dict[str, Any], facility_count: int, excluded: list[list[str]], forced_site_ids: list[str] | None = None) -> dict[str, Any]:
+def _solve_one(cp_model: Any, payload: dict[str, Any], facility_count: int, excluded: list[list[str]], forced_site_ids: list[str] | None = None, deadline: float | None = None) -> dict[str, Any]:
     demands, sites, grid = _validate(payload)
     options = payload.get("options") or {}
     objective_spec = payload.get("objective")
@@ -249,8 +249,16 @@ def _solve_one(cp_model: Any, payload: dict[str, Any], facility_count: int, excl
         raise FacilityError("FACILITY_OBJECTIVE_INT64_OVERFLOW", {"upperBound": objective_upper_bound})
     model.minimize(sum(terms))
 
+    remaining = None if deadline is None else deadline - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        return {"facilityCount": facility_count, "status": "TIME_LIMIT",
+                "reasonCode": "GLOBAL_DEADLINE_EXHAUSTED", "solveTimeMs": 0}
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = min(120.0, max(1.0, float(options.get("timeLimitSeconds", 15))))
+    requested_seconds = min(120.0, max(1.0, float(options.get("timeLimitSeconds", 15))))
+    # Validate the public request above, then apply the internal remaining time
+    # directly to CP-SAT. A valid 1s budget can have a subsecond remainder after
+    # model preparation; it is still useful compute time, not an invalid input.
+    solver.parameters.max_time_in_seconds = requested_seconds if remaining is None else min(requested_seconds, remaining)
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = int(options.get("randomSeed", 1909))
     started = time.perf_counter()
@@ -325,12 +333,12 @@ def solve_facility(payload: dict[str, Any], cp_model: Any, engine_version: str,
         return row
 
     def _solve(count, extra, excluded=None):
-        options_extra = {}
-        if deadline is not None:
-            options_extra["timeLimitSeconds"] = max(0.01, min(120, deadline - time.monotonic()))
-        options_extra.update(extra)
-        request = {**payload, "options": {**payload.get("options", {}), **options_extra}}
-        return _solve_one(cp_model, request, count, excluded or [])
+        nonlocal budget_exhausted
+        request = {**payload, "options": {**payload.get("options", {}), **extra}}
+        result = _solve_one(cp_model, request, count, excluded or [], deadline=deadline)
+        if result.get("reasonCode") == "GLOBAL_DEADLINE_EXHAUSTED":
+            budget_exhausted = True
+        return result
 
     for count in counts:
         if count in finished_counts:
@@ -387,8 +395,9 @@ def solve_facility(payload: dict[str, Any], cp_model: Any, engine_version: str,
     current_ids = [str(value) for value in payload.get("options", {}).get("currentPortfolioSiteIds", [])]
     current = None
     if current_ids and (deadline is None or deadline-time.monotonic() > 0):
-        request = payload if deadline is None else {**payload, "options": {**payload.get("options", {}), "timeLimitSeconds": max(0.01, min(120, deadline-time.monotonic()))}}
-        current = _solve_one(cp_model, request, len(current_ids), [], current_ids)
+        current = _solve_one(cp_model, payload, len(current_ids), [], current_ids, deadline=deadline)
+        if current.get("reasonCode") == "GLOBAL_DEADLINE_EXHAUSTED":
+            budget_exhausted = True
     if current is not None:
         if payload.get("objective"):
             current["objectiveMode"] = payload["objective"]["mode"]

@@ -54,6 +54,20 @@ assert.throws(() => context.select(supply("BAD", { backendIdentity: { token: "se
 assert.throws(() => context.select({ studyKind: "UNSUPPORTED", studyId: "BAD" }), { code: "STUDY_CONTEXT_IDENTITY_INVALID" });
 assert.equal(context.snapshot(), beforeInvalid, "invalid identity cannot change current object");
 
+// Hardening health/job identity must survive the real cross-page context bridge.
+// This used to throw after native solving and prevent results from rendering.
+const pinned = { ...backend, buildPolicy: "STRICT_PINNED", expectedBuildFingerprint: "a".repeat(64), buildMatch: true };
+context.select(supply("PINNED-SYNTHETIC", { backendIdentity: pinned }));
+assert.equal(context.snapshot().current.backendIdentity.buildPolicy, "STRICT_PINNED");
+assert.equal(context.snapshot().current.backendIdentity.expectedBuildFingerprint, pinned.expectedBuildFingerprint);
+for (const invalid of [{ buildPolicy: "PERMISSIVE" }, { expectedBuildFingerprint: "not-a-pin" }, { expectedBuildFingerprint: true }]) {
+  const before = context.snapshot();
+  assert.throws(() => context.select(supply("BAD-PIN", { backendIdentity: { ...pinned, ...invalid } })), { code: "STUDY_CONTEXT_BACKEND_INVALID" });
+  assert.equal(context.snapshot(), before);
+}
+context.select(supply("EXPLICIT-COMPATIBLE", { backendIdentity: { ...backend, buildPolicy: "COMPATIBLE_WARN", expectedBuildFingerprint: null } }));
+assert.equal(context.snapshot().current.backendIdentity.expectedBuildFingerprint, null);
+
 context.clear();
 assert.equal(context.snapshot().current, null);
 unsubscribe();

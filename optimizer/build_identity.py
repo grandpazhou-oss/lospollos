@@ -17,7 +17,13 @@ EXTRA_FILES = (
 
 def build_manifest(root: Path = ROOT) -> dict:
     root = Path(root).resolve()
-    files = sorted({p.relative_to(root).as_posix() for p in (root / "optimizer").glob("*.py")} | set(EXTRA_FILES))
+    optimizer = root / "optimizer"
+    # Python packages below optimizer are executable runtime too. A newly added
+    # package must invalidate the old manifest just like a top-level module.
+    paths = list(optimizer.rglob("*"))
+    if optimizer.is_symlink() or any(p.is_symlink() for p in paths):
+        raise RuntimeError("BUILD_RUNTIME_FILE_INVALID")
+    files = sorted({p.relative_to(root).as_posix() for p in paths if p.suffix == ".py"} | set(EXTRA_FILES))
     if "optimizer/supply_chain_job_worker_v6.py" not in files:
         raise RuntimeError("BUILD_RUNTIME_FILE_MISSING")
     combined = hashlib.sha256()

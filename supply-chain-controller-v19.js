@@ -16,7 +16,13 @@
     const resumeKey='STCT_SUPPLY_JOB_V6';
     try{const previous=globalThis.sessionStorage?.getItem(resumeKey);if(previous){const saved=JSON.parse(previous);globalThis.sessionStorage.removeItem(resumeKey);state.status='INTERRUPTED';state.lastError={code:'SUPPLY_RUN_INTERRUPTED',detail:{jobId:saved.jobId,studyId:saved.studyId||null,inputHash:saved.inputHash||null}};startupInterruption=state.lastError;if(saved.base&&saved.jobId)fetchValue(`${saved.base}/${saved.jobId}/cancel`,{method:'POST'}).catch(()=>{});}}catch(_){}
     state=Design.deepFreeze(state);
-    const snapshot=()=>clone(state),viewState=()=>state,set=patch=>{if(Object.hasOwn(patch,'savedPointer'))saveLineage++;state=Design.deepFreeze({...state,...patch});return state;};
+    const snapshot=()=>clone(state),viewState=()=>state,set=patch=>{
+      // Candidate/job completion can change report inputs without changing study revision.
+      // Cancel any comparison of the superseded inputs before publishing newer state.
+      if(activeComparison&&['study','baseline','scenario','candidates','planningReference','jointRequest','solverRuns','backendIdentity'].some(key=>Object.hasOwn(patch,key)&&patch[key]!==state[key])){activeComparison.abort();activeComparison=null;}
+      if(Object.hasOwn(patch,'savedPointer'))saveLineage++;
+      state=Design.deepFreeze({...state,...patch});return state;
+    };
     const terminal=new Set(['COMPLETE','PARTIAL','CANCELLED','FAILED']);
     const clearResume=jobId=>{try{const saved=JSON.parse(globalThis.sessionStorage?.getItem(resumeKey)||'null');if(!jobId||saved?.jobId===jobId)globalThis.sessionStorage?.removeItem(resumeKey);}catch(_){};};
     async function jsonRequest(url,init={},timeoutMs=10000){

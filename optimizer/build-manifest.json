@@ -3,7 +3,7 @@
   "files": [
     {
       "path": "optimizer/build_identity.py",
-      "sha256": "a86d2e0e98f2ec6490ca3335e606a13ffd55816880fe5db30cc011ee35aead3d"
+      "sha256": "35d2b1d2d8d40742a47a8589433e9ab29c57c5b45d14d9bbafc4c6e8dbdd57db"
     },
     {
       "path": "optimizer/canonical_contract.py",
@@ -11,7 +11,7 @@
     },
     {
       "path": "optimizer/facility_mvp1.py",
-      "sha256": "993817e35ca44f5af303ba47a651f7672b56263d02e38ad76f5d53157abaad63"
+      "sha256": "cc6d99851685d47bab19012a2bc793a2f0366facebd4968ffff54a81bd030b51"
     },
     {
       "path": "optimizer/matrix_contract.py",
@@ -27,7 +27,7 @@
     },
     {
       "path": "optimizer/ortools_service.py",
-      "sha256": "bfa3527795071e56c6e53b425fc8f9e35b11af84746fa90d5e06f809881f82c7"
+      "sha256": "cdd6d7d59de758256d99d6585c59cff660b704e51ad4a6b2b23cb31df32d09f1"
     },
     {
       "path": "optimizer/rolling_solver_v16.py",
@@ -43,11 +43,11 @@
     },
     {
       "path": "optimizer/supply_chain_job_worker_v6.py",
-      "sha256": "2603c52407aa49b93ef3d67ed5a079cd21ebe1f351693371e4cbb6ae7dced7e7"
+      "sha256": "b379c07d3477c0d8b3b0b54b1e0f32a244bc088db24657159759ba8f9340b3c8"
     },
     {
       "path": "optimizer/supply_chain_jobs_v6.py",
-      "sha256": "5cfd977dca8be08975a56ca62279159b95d155b1653daff8be41f7de6f1a77eb"
+      "sha256": "8e8d6e804b2cdfbce25eaf0dcb592cd83e718c2dc275cef713a0677c5f121b9b"
     },
     {
       "path": "optimizer/supply_chain_joint_v19.py",
@@ -55,7 +55,7 @@
     },
     {
       "path": "public-resources.json",
-      "sha256": "7f0664c86ebf416c340d7613206eba7c6ded6920f8ab7e8023b40c73d6904b20"
+      "sha256": "6ed421a2b6663a4a0d7647572fe4b9185bead163d1c22f1b27bfb3cebbb057d5"
     },
     {
       "path": "scripts/local_trial.py",
@@ -74,5 +74,5 @@
       "sha256": "92f26e26cfed3f0a25d56662012f180dcedc5388d6e4595a8d5f75317489fb82"
     }
   ],
-  "fingerprint": "224442d2cec1278f5cab728855c422b06d8f7a7ec3f4f34d0ee3e23097cdc6c6"
+  "fingerprint": "33f19954a022d6d9dccd429599fc5a429741d6900c375c992742ee32282c222c"
 }

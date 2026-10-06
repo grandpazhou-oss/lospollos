@@ -72,15 +72,21 @@
     const sourceScenario = clone(appliedPlan?.meta?.scenarioSnapshot || appliedPlan?.scenario || {});
     const sourceOrders = new Map((sourceScenario.orders || []).map((order) => [text(order.id || order.orderId || order.code), order]));
     const routes = (appliedPlan?.routes || []).map((route, routeIndex) => {
-      const geometry = clone(route.geometry || route.routeGeometry || route.coordinates || []);
-      const fallback = [121.45 + routeIndex * 0.002, 31.2 + routeIndex * 0.001];
+      const routeId = text(route.routeId || `APPLIED-R${String(routeIndex + 1).padStart(2, "0")}`);
+      const features = (appliedPlan.routeGeoJson?.features || []).filter((feature) => text(feature.properties?.routeId) === routeId);
+      const geometry = clone(features.length === 1 ? features[0].geometry?.coordinates : route.geometry || route.routeGeometry || route.coordinates || []);
+      if (features.length > 1 || (features.length === 1 && features[0].geometry?.type !== "LineString")
+        || !Array.isArray(geometry) || geometry.length < 2
+        || geometry.some((point) => !Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite) || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90)) {
+        throw Object.assign(new Error(`Applied route ${routeId} requires unambiguous real LineString geometry`), { code: "APPLIED_ROUTE_GEOMETRY_INVALID" });
+      }
       return {
         ...clone(route),
-        routeId: text(route.routeId || `APPLIED-R${String(routeIndex + 1).padStart(2, "0")}`),
+        routeId,
         vehicleId: text(route.vehicleId || route.vehicle?.id || `APPLIED-V${String(routeIndex + 1).padStart(2, "0")}`),
         revision: Number(route.revision || appliedPlan.revision || 1),
         orderIds: clone(route.orderIds || route.orders?.map((order) => text(order.id || order.orderId || order.code)) || []),
-        geometry: geometry.length ? geometry : [fallback, [fallback[0] + 0.001, fallback[1] + 0.001]],
+        geometry,
       };
     });
     const stops = routes.flatMap((route) => route.orderIds.map((orderId, stopIndex) => {
@@ -120,6 +126,24 @@
     };
     if (!value.scenarioHash) value.scenarioHash = dependencies.Integrity.hashValue({ planHash: appliedPlan.planHash, routes, stops });
     return value;
+  }
+
+  function operationalPlanProjection(appliedPlan, operationalScenario) {
+    // These are derived presentation/execution fields, excluded from the
+    // canonical assignment envelope. Preserve the verified hash and metrics.
+    const projected = clone(appliedPlan);
+    const routes = new Map(operationalScenario.routes.map((route) => [route.routeId, route]));
+    projected.routes = projected.routes.map((route) => {
+      const operationalRoute = routes.get(text(route.routeId));
+      if (!operationalRoute) throw Object.assign(new Error("Applied route requires its canonical routeId"), { code: "APPLIED_ROUTE_ID_REQUIRED" });
+      const value = { ...route, geometry: clone(operationalRoute.geometry) };
+      if (!Number.isFinite(value.plannedDistanceMeters)) {
+        if (Number.isFinite(value.roadMeters)) value.plannedDistanceMeters = value.roadMeters;
+        else if (Number.isFinite(value.km)) value.plannedDistanceMeters = value.km * 1000;
+      }
+      return value;
+    });
+    return projected;
   }
 
   function recoveryFixture(plan, executionRunHash, executionStateHash) {
@@ -172,14 +196,15 @@
     scenario.routes.slice(0, 2).forEach((route, index) => {
       appendSeedEvent(store, run, { eventType: "ROUTE_ACCEPTED", routeId: route.routeId, vehicleId: route.vehicleId, logicalTime: 102 + index * 5 });
       appendSeedEvent(store, run, { eventType: "VEHICLE_DEPARTED", routeId: route.routeId, vehicleId: route.vehicleId, logicalTime: 103 + index * 5 });
+      const coordinate = route.geometry[Math.min(3, route.geometry.length - 1)];
       appendSeedEvent(store, run, {
         eventType: "POSITION_RECORDED",
         routeId: route.routeId,
         vehicleId: route.vehicleId,
-        coordinate: route.geometry[3],
+        coordinate,
         roadEdgeId: `P3-EDGE-${route.routeId}`,
         logicalTime: 104 + index * 5,
-        payload: { derivedTelemetryHash: dependencies.Integrity.hashValue({ routeId: route.routeId, point: route.geometry[3] }), telemetryStatus: "PASS" },
+        payload: { derivedTelemetryHash: dependencies.Integrity.hashValue({ routeId: route.routeId, point: coordinate }), telemetryStatus: "PASS" },
       });
       if (index === 0) {
         const orderId = route.orderIds[0];
@@ -195,7 +220,7 @@
     const noWebGL = options.noWebGL === true;
     const fixture = { vehicleCount: 8, stopsPerVehicle: 8, positionsPerVehicle: 18, ...(options.fixture || {}) };
     let scenario = options.appliedPlan ? scenarioFromAppliedPlan(options.appliedPlan) : dependencies.FleetReplay.syntheticScenario(fixture);
-    let plan = options.appliedPlan ? clone(options.appliedPlan) : planFromScenario(scenario);
+    let plan = options.appliedPlan ? operationalPlanProjection(options.appliedPlan, scenario) : planFromScenario(scenario);
     let contextSource = options.appliedPlan ? "UPLOADED_APPLIED" : "SYNTHETIC_FALLBACK";
     let transitionEvents = [];
     let alertStore = dependencies.Alerts.createInbox();
@@ -263,28 +288,43 @@
       });
     }
 
+    function captureContext() {
+      return { scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver, revision, transitionEvents: [...transitionEvents] };
+    }
+
+    function restoreContext(previous) {
+      ({ scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver, revision, transitionEvents } = previous);
+    }
+
     function rebuildSession(nextScenario, nextPlan, sourceType) {
-      scenario = clone(nextScenario);
-      plan = clone(nextPlan);
-      contextSource = sourceType;
-      alertStore = dependencies.Alerts.createInbox();
-      workspace = dependencies.Workspace.createWorkspace({ appliedPlan: plan, alertStore, locale: workspace.snapshot().locale });
-      workspace.createExecutionFromPlan(plan, { scenarioId: `SCENARIO-${scenario.scenarioHash.slice(-12)}`, inputHash: scenario.scenarioHash, noWebGL });
-      executionStore = workspace.executionStore();
-      run = executionStore.snapshot().run;
-      if(plan.sourceGate!=="P5_DATA_DRAFT")seedExecution(executionStore, run, scenario);
-      replay = workspace.createFleetReplay(scenario);
-      simulationStore = dependencies.Simulation.createSimulationStore();
-      simulationReady = simulationStore.initialize(plan);
-      recovery = recoveryFixture(plan, run.executionRunHash, executionStore.snapshot().executionStateHash);
-      workspace.attachRecoverySession(recovery.session);
-      workspace.ingestRecoveryPool(recovery.pool);
-      offlineQueue = dependencies.OfflineQueue.createQueue();
-      incidents = [];
-      localReviewNotes = new Map();
-      selected = { routeId: scenario.routes[0]?.routeId || "", vehicleId: scenario.routes[0]?.vehicleId || "", orderId: "", stopId: "", alertId: "", incidentId: "" };
-      driver = dependencies.Driver.create({ run, plan, store: executionStore, queue: offlineQueue, inbox: alertStore, vehicleId: scenario.routes[Math.min(2, scenario.routes.length - 1)].vehicleId });
-      seedAlerts();
+      // Retain the previous authorities if synchronous preparation fails.
+      const previous = captureContext();
+      try {
+        scenario = clone(nextScenario);
+        plan = operationalPlanProjection(nextPlan, scenario);
+        contextSource = sourceType;
+        alertStore = dependencies.Alerts.createInbox();
+        workspace = dependencies.Workspace.createWorkspace({ appliedPlan: plan, alertStore, locale: workspace.snapshot().locale });
+        workspace.createExecutionFromPlan(plan, { scenarioId: `SCENARIO-${scenario.scenarioHash.slice(-12)}`, inputHash: scenario.scenarioHash, noWebGL });
+        executionStore = workspace.executionStore();
+        run = executionStore.snapshot().run;
+        if(plan.sourceGate!=="P5_DATA_DRAFT")seedExecution(executionStore, run, scenario);
+        replay = workspace.createFleetReplay(scenario);
+        simulationStore = dependencies.Simulation.createSimulationStore();
+        simulationReady = simulationStore.initialize(plan);
+        recovery = recoveryFixture(plan, run.executionRunHash, executionStore.snapshot().executionStateHash);
+        workspace.attachRecoverySession(recovery.session);
+        workspace.ingestRecoveryPool(recovery.pool);
+        offlineQueue = dependencies.OfflineQueue.createQueue();
+        incidents = [];
+        localReviewNotes = new Map();
+        selected = { routeId: scenario.routes[0]?.routeId || "", vehicleId: scenario.routes[0]?.vehicleId || "", orderId: "", stopId: "", alertId: "", incidentId: "" };
+        driver = dependencies.Driver.create({ run, plan, store: executionStore, queue: offlineQueue, inbox: alertStore, vehicleId: scenario.routes[Math.min(2, scenario.routes.length - 1)].vehicleId });
+        seedAlerts();
+      } catch (error) {
+        restoreContext(previous);
+        throw error;
+      }
     }
 
     function adoptAppliedPlan(appliedPlan, transition = {}) {
@@ -296,21 +336,29 @@
       const active = !["COMPLETED", "CANCELLED", "FAILED"].includes(executionStore.snapshot().run.status);
       if (active && policy === "REJECT_WHILE_RUNNING") return { status: "REJECTED", code: "ACTIVE_EXECUTION_PLAN_CHANGE_REJECTED", policy, activePlanHash: plan.planHash };
       if (active && policy === "EXPLICIT_MIGRATION" && transition.migrationApproved !== true) return { status: "REJECTED", code: "EXPLICIT_MIGRATION_APPROVAL_REQUIRED", policy, activePlanHash: plan.planHash };
-      const before = { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash };
-      const nextScenario = scenarioFromAppliedPlan(appliedPlan);
-      rebuildSession(nextScenario, appliedPlan, "UPLOADED_APPLIED");
-      const event = {
-        schemaVersion: "stct-command-context-transition-v1.9-p31",
-        transitionId: `COMMAND-CONTEXT-${String(transitionEvents.length + 1).padStart(4, "0")}`,
-        policy,
-        reason: text(transition.reason || "VERIFIED_PLAN_APPLIED"),
-        before,
-        after: { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash },
-      };
-      event.transitionHash = dependencies.Integrity.hashValue(event);
-      transitionEvents.push(event);
-      notify("VERIFIED_APPLIED_PLAN_ADOPTED", event);
-      return { status: "ADOPTED", sourceType: contextSource, event: clone(event) };
+      const previous = captureContext();
+      try {
+        const before = { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash };
+        const nextScenario = scenarioFromAppliedPlan(appliedPlan);
+        rebuildSession(nextScenario, appliedPlan, "UPLOADED_APPLIED");
+        const event = {
+          schemaVersion: "stct-command-context-transition-v1.9-p31",
+          transitionId: `COMMAND-CONTEXT-${String(transitionEvents.length + 1).padStart(4, "0")}`,
+          policy,
+          reason: text(transition.reason || "VERIFIED_PLAN_APPLIED"),
+          before,
+          after: { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash },
+        };
+        event.transitionHash = dependencies.Integrity.hashValue(event);
+        transitionEvents.push(event);
+        notify("VERIFIED_APPLIED_PLAN_ADOPTED", event);
+        return { status: "ADOPTED", sourceType: contextSource, event: clone(event) };
+      } catch (error) {
+        // An earlier listener may have observed the transient notification. We
+        // restore final authority, revision and lineage, not outside effects.
+        restoreContext(previous);
+        throw error;
+      }
     }
 
     function currentTracks() { return dependencies.FleetTracks.build(scenario.positions); }
