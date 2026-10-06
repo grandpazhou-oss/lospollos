@@ -107,7 +107,7 @@ jobs:
   stress-soak:
     name: Sustained native and browser load
     # Run once for an explicit validation-branch push, not again on its PR event.
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/codex/enterprise-validation-20261006' }}
+    if: ${{ !cancelled() && needs.core.result == 'success' && needs['native-browser'].result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/codex/enterprise-validation-20261006' }}
     needs: [core, native-browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -132,7 +132,13 @@ jobs:
         id: native_harness_guards
         timeout-minutes: 2
         run: python tests/test_enterprise_native_soak.py --self-test --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/harness-guards"
+      - name: Browser diagnostic profile and immutable-history guards (not browser execution)
+        id: browser_harness_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s tests -p test_enterprise_browser_soak.py -v
       - name: Existing approved Chromium on ephemeral runner
+        if: ${{ !cancelled() }}
         run: python -m playwright install --with-deps chromium
       - name: Native soak harness preflight (not a completed soak)
         id: native_smoke
@@ -161,8 +167,13 @@ jobs:
       - name: Browser soak harness preflight (not a completed soak)
         id: browser_smoke
         timeout-minutes: 5
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
         run: python tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser"
+      - name: Fixed-history browser diagnostic preflight (not a completed control)
+        id: browser_diagnostic_smoke
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
+        run: python tests/test_enterprise_browser_soak.py --workload-profile fixed-history-recovery --memory-profile hosted-2gib --smoke --ui-cycles 1 --storage-cycles 10 --native-every 1 --fixed-history-seconds 2 --recovery-seconds 2 --seed-max-seconds 60 --max-wall-seconds 180 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser-diagnostic"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -181,15 +192,16 @@ jobs:
           path: ${{ runner.temp }}/enterprise-native-soak
           retention-days: 7
           if-no-files-found: warn
-      - name: Twelve-minute isolated UI and native IndexedDB soak
-        timeout-minutes: 16
-        if: ${{ !cancelled() && steps.browser_smoke.outcome == 'success' }}
-        run: python tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --duration-seconds 720 --evidence-dir "$RUNNER_TEMP/enterprise-browser-soak"
+      - name: Fixed-history replay and ordinary idle recovery diagnostic
+        # 960s worker watchdog plus at most 65s of verified-process cleanup.
+        timeout-minutes: 18
+        if: ${{ !cancelled() && steps.browser_smoke.outcome == 'success' && steps.browser_diagnostic_smoke.outcome == 'success' }}
+        run: python tests/test_enterprise_browser_soak.py --workload-profile fixed-history-recovery --memory-profile hosted-2gib --fixed-history-seconds 360 --recovery-seconds 180 --seed-max-seconds 300 --max-wall-seconds 960 --evidence-dir "$RUNNER_TEMP/enterprise-browser-diagnostic"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: enterprise-browser-soak-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/enterprise-browser-soak
+          name: enterprise-browser-diagnostic-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-browser-diagnostic
           retention-days: 7
           if-no-files-found: warn
       - name: Three independent COMMAND UI repetition cycles

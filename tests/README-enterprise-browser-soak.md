@@ -33,6 +33,8 @@ python -B tests/test_enterprise_browser_soak.py \
 
 Configuration:
 
+- `--workload-profile`: `mutation-soak` (default) or separately labeled
+  `fixed-history-recovery`; the latter is a diagnostic, not mutation-soak qualification
 - `--duration-seconds`: 0–900 seconds; qualifying soak requires at least 600
 - `--ui-cycles`: 1–50; qualifying soak requires at least 20
 - `--storage-cycles`: 1–1000; qualifying soak requires at least 300
@@ -212,6 +214,81 @@ artifact. It does not rewrite or reclassify that original evidence, change a pro
 memory guarantee, increase concurrency, change the runner, or relax FD/tab limits.
 A pass in `hosted-2gib` is evidence for that explicitly named profile only.
 
+## Separate fixed-history and natural-recovery diagnostic
+
+The same-load `1dfd614` comparison kept consumed boolean JSHandles at zero but
+Python RSS still increased by 129,249,280 bytes, versus 133,316,608 previously.
+Request/Response/Route counts rose from 406 to 6,076 each; ElementHandles rose from
+25 to 325. The handle correction therefore did not explain the main RSS growth.
+This separate profile tests repeated reads at fixed durable history, followed by
+ordinary idle recovery, without rewriting either original mutation-soak result.
+
+```sh
+python -B tests/test_enterprise_browser_soak.py \
+  --workload-profile fixed-history-recovery --memory-profile hosted-2gib \
+  --fixed-history-seconds 360 --recovery-seconds 180 --seed-max-seconds 300 \
+  --max-wall-seconds 960 --evidence-dir /tmp/fresh-browser-fixed-history
+```
+
+It seeds exactly 30 complete UI cycles and 600 component cycles using the existing
+save/conflict/branch/export/import/reload/history assertions and seven genuine
+native retries. This seed is unpaced (`duration-seconds` defaults to zero for this
+profile) and must finish within 300 seconds. A rapid-seed resource/deadline failure
+remains a failure; the resource cap is not adjusted. Seed duration is not claimed
+as a sustained mutation-load observation.
+
+The next phase performs at least six minutes of public reopens and full component
+history verification, with at least one actual operation in every complete minute.
+The last phase observes at least three minutes of ordinary idle recovery, reporting
+zero pressure operations. Resource samples and once-per-minute read-only
+CDP/protocol counters continue in both phases. Phase resource trends are separate.
+The same three page objects, browser/profile, exact-origin network guard, services
+and 2 GiB ceiling remain throughout. There is no browser restart, forced GC,
+dispatcher-threshold override, private-map deletion, trace or package patch.
+
+Before readback and after each control phase, readonly native transactions read
+every row from `supplyStudies`, `supplySnapshots`, `pointers` and `audit` in each of
+the two existing databases. Record counts and SHA-256 digests of the complete row
+arrays must match exactly, detecting changed history, pointer revisions, records
+or audit contents even when counts remain equal. The database set must also stay
+unchanged. Digests and counts are retained in the summary; browser quota estimates
+are observations, not exact-stability assertions. No diagnostic write is made to
+the application's persistent data. If a database disappears between enumeration
+and open, any upgrade transaction is aborted, its connection is closed, and the
+observation fails instead of recreating the database.
+
+`status: PASS_DIAGNOSTIC` and `diagnosticQualification: PASS_DIAGNOSTIC` establish
+that these configured controls, data invariants, resource bounds and cleanup
+passed. `soakQualification` remains `NOT_MUTATION_SOAK`; no leak-free or overall
+stability conclusion follows automatically. On worker failure, cleanup failure or
+supervisor interruption, diagnostic qualification is finalized from the terminal
+status (`FAIL` or `BLOCKED_ENVIRONMENT`) and cannot retain an earlier pass. The
+diagnostic `soakQualification` label remains `NOT_MUTATION_SOAK` on those paths.
+The independent watchdog is at most
+960 seconds, with the existing bounded owned-process cleanup afterward. Seed,
+readback and idle budgets together may not exceed 900 seconds; watchdog must cover
+those budgets plus at least 30 seconds. CI should also leave room for supervisor
+cleanup. The default mutation profile's duration and minimum gates are unchanged.
+
+The short diagnostic qualification is explicit and cannot receive long-profile
+qualification:
+
+```sh
+python -B tests/test_enterprise_browser_soak.py \
+  --workload-profile fixed-history-recovery --memory-profile hosted-2gib --smoke \
+  --ui-cycles 1 --storage-cycles 10 --native-every 1 \
+  --fixed-history-seconds 2 --recovery-seconds 2 --seed-max-seconds 60 \
+  --max-wall-seconds 180 --evidence-dir /tmp/fresh-browser-fixed-history-smoke
+```
+
+Successful smoke reports `PASS_DIAGNOSTIC_SMOKE`, `NOT_MUTATION_SOAK`, and
+`diagnosticQualification: NOT_QUALIFIED_SHORT_RUN`. Run browser-free guard checks
+with `python -B -m unittest discover -s tests -p test_enterprise_browser_soak.py`.
+These test configuration boundaries, exact fingerprint tamper detection, a
+controlled missing-after-enumeration request event, and worker/supervisor terminal
+qualification. The controlled request event is not native-IDB/browser evidence;
+actual browser control execution still requires the approved runtime.
+
 ## Evidence, status and cleanup
 
 - `summary.json`: actual checkout SHA, dirty flag/paths, diff and harness hashes,
@@ -242,7 +319,8 @@ available. It never kills by port/image name. A cleanup failure makes the run fa
 and retains the ownership receipt. There is no merge, deployment, installation or
 modification of production code by this harness.
 
-Exit status: 0 means all configured checks and cleanup passed; 1 means failure or
+Exit status: 0 means all configured checks and cleanup passed (including separately
+labeled diagnostic or diagnostic-smoke success); 1 means failure or
 interruption; 78 means an environment/dependency/browser/baseline-budget blocker.
 A short smoke exit 0 is **not** qualifying soak evidence. Always inspect both
 `status` and `soakQualification` plus actual coverage before making acceptance claims.

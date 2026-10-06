@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import sys
 import time
+import unittest
 import uuid
 from urllib.parse import urlsplit
 
@@ -33,6 +34,7 @@ from test_enterprise_ui_faults import FaultSuite
 
 
 MEMORY_PROFILES = {'standard-1gib': 1024, 'hosted-2gib': 2048}
+WORKLOAD_PROFILES = ('mutation-soak', 'fixed-history-recovery')
 PRIOR_1GIB_EVIDENCE = {
     'checkout': 'bd9c019', 'artifact': 'enterprise-soak-preflight/browser/resources.jsonl',
     'archiveReference': 'ci-bd9c019/preflight/browser', 'elapsedSeconds': 2.196,
@@ -40,6 +42,19 @@ PRIOR_1GIB_EVIDENCE = {
     'uiCycles': 0, 'componentCycles': 0,
     'conclusion': 'INITIAL_AGGREGATE_BUDGET_BLOCK_AND_OLD_HARNESS_INTERRUPT_HANG; '
                   'NOT_BROWSER_ALONE_ABOVE_1GIB_AND_NOT_APPLICATION_LEAK_EVIDENCE'}
+
+
+def finalize_diagnostic_qualification(summary):
+    """Keep diagnostic qualification consistent with the latest terminal status."""
+    if summary.get('workloadProfile') != 'fixed-history-recovery':
+        return
+    summary['soakQualification'] = 'NOT_MUTATION_SOAK'
+    summary['diagnosticQualification'] = {
+        'PASS_DIAGNOSTIC': 'PASS_DIAGNOSTIC',
+        'PASS_DIAGNOSTIC_SMOKE': 'NOT_QUALIFIED_SHORT_RUN',
+        'BLOCKED_ENVIRONMENT': 'BLOCKED_ENVIRONMENT',
+        'FAIL': 'FAIL', 'RUNNING': 'RUNNING',
+    }.get(summary.get('status'), 'NOT_RUN')
 
 
 class BrowserSoakSuite(FaultSuite):
@@ -66,7 +81,12 @@ class BrowserSoakSuite(FaultSuite):
         self.activity_buckets = {}
         self.controlled_interval_seconds = 0.0
         self.next_memory_observation = 0.0
+        self.diagnostic_phase = None
+        self.phase_started = None
+        self.phase_activity_buckets = {}
+        self.diagnostic_pages = None
         self.result.update(suite='ENTERPRISE_BROWSER_STORAGE_SOAK', source=source_identity(ROOT),
+            workloadProfile=args.workload_profile,
             method='BOUNDED_PUBLIC_UI_SOAK_PLUS_SEPARATE_NATIVE_INDEXEDDB_COMPONENT',
             requested={'durationSeconds': args.duration_seconds, 'uiCycles': args.ui_cycles,
                        'componentCycles': args.storage_cycles, 'nativeEveryUiCycles': args.native_every},
@@ -98,8 +118,22 @@ class BrowserSoakSuite(FaultSuite):
                 'interpretation': 'Successful distinct edits intentionally retain immutable versions and audit. '
                                   'Bounded history/database bytes are reported separately from process-resource trends; '
                                   'no automatic leak-free claim or disk-filling quota test.'})
+        if self.is_diagnostic:
+            self.result.update(method='SEEDED_FIXED_HISTORY_READBACK_AND_NATURAL_IDLE_RECOVERY',
+                soakQualification='NOT_MUTATION_SOAK', diagnosticQualification='NOT_RUN',
+                diagnostic={'seedMaxSeconds': args.seed_max_seconds,
+                    'fixedHistorySeconds': args.fixed_history_seconds, 'recoverySeconds': args.recovery_seconds,
+                    'seedMutationPacing': 'UNPACED_EXISTING_COMPLETE_UI_AND_COMPONENT_CHECKS',
+                    'idleIsPressureActivity': False, 'phases': {}})
+            self.result['stages'].update({name: {'status': 'NOT_RUN'} for name in
+                                         ('FIXED_HISTORY_READBACK', 'NATURAL_IDLE_RECOVERY')})
+
+    @property
+    def is_diagnostic(self):
+        return self.args.workload_profile == 'fixed-history-recovery'
 
     def write(self):
+        finalize_diagnostic_qualification(self.result)
         if hasattr(self, 'activity_seconds'):
             self.result['soakWindowStarted'] = self.soak_started is not None
             self.result['activityTiming'] = {
@@ -111,7 +145,8 @@ class BrowserSoakSuite(FaultSuite):
                 'meaning': 'Measured UI/component/native operations include normal response waits. '
                            'Explicit cadence intervals are separate, not pressure activity.'}
             if self.soak_started is not None and not self.result.get('observationWindowEnded'):
-                self.result['observedSoakSeconds'] = round(time.monotonic() - self.soak_started, 3)
+                key = 'observedDiagnosticSeconds' if self.is_diagnostic else 'observedSoakSeconds'
+                self.result[key] = round(time.monotonic() - self.soak_started, 3)
         super().write()
 
     def begin(self, stage):
@@ -133,11 +168,20 @@ class BrowserSoakSuite(FaultSuite):
         if self.context:
             tabs = sum(len(context.pages) for context in self.browser.contexts) if self.browser else len(self.context.pages)
             assert tabs <= 3, f'TAB_LIMIT_EXCEEDED: {tabs}'
+            if self.diagnostic_pages is not None:
+                assert tabs == 3 and tuple(self.context.pages) == self.diagnostic_pages, 'DIAGNOSTIC_PAGE_SET_CHANGED'
         assert not self.result['pageErrors'], self.result['pageErrors']
         # A minimum operating window is requested, with a finite overrun allowance
         # for the last bounded UI transaction, not an unbounded hang.
-        if self.soak_started and time.monotonic() - self.soak_started > self.args.duration_seconds + 180:
-            raise AssertionError('SOAK_OPERATION_DEADLINE_EXCEEDED')
+        if self.soak_started:
+            elapsed = time.monotonic() - self.soak_started
+            if self.is_diagnostic:
+                if self.diagnostic_phase == 'seed':
+                    assert elapsed <= self.args.seed_max_seconds, 'DIAGNOSTIC_SEED_DEADLINE_EXCEEDED'
+                limit = self.args.seed_max_seconds + self.args.fixed_history_seconds + self.args.recovery_seconds + 30
+                assert elapsed <= limit, 'DIAGNOSTIC_OPERATION_DEADLINE_EXCEEDED'
+            elif elapsed > self.args.duration_seconds + 180:
+                raise AssertionError('SOAK_OPERATION_DEADLINE_EXCEEDED')
 
     def open_browser(self, playwright):
         self.begin('BROWSER')
@@ -297,7 +341,12 @@ class BrowserSoakSuite(FaultSuite):
         bucket = int(max(0, start - self.soak_started) // 60)
         counts = self.activity_buckets.setdefault(str(bucket), {})
         counts[kind] = counts.get(kind, 0) + 1
-        self.events.emit('operation_timing', operation=kind, seconds=round(elapsed, 4), minuteBucket=bucket)
+        if self.diagnostic_phase and self.phase_started is not None:
+            phase_bucket = str(int(max(0, start - self.phase_started) // 60))
+            phase_counts = self.phase_activity_buckets.setdefault(self.diagnostic_phase, {})
+            phase_counts[phase_bucket] = phase_counts.get(phase_bucket, 0) + 1
+        self.events.emit('operation_timing', operation=kind, seconds=round(elapsed, 4), minuteBucket=bucket,
+                         diagnosticPhase=self.diagnostic_phase)
         if time.monotonic() >= self.next_memory_observation:
             self.memory_observation(kind)
         return value
@@ -344,6 +393,7 @@ class BrowserSoakSuite(FaultSuite):
             finally:
                 session.detach()
         self.events.emit('memory_diagnostic', label=label, uiCycle=self.current_cycle,
+            diagnosticPhase=self.diagnostic_phase,
             componentCycles=self.result['coverage']['componentCycles'],
             protocolObjects=self.protocol_object_counts(), pages=pages,
             collector={'retainedResourceSamples': len(self.monitor.samples),
@@ -459,8 +509,7 @@ class BrowserSoakSuite(FaultSuite):
         self.memory_observation('idle_baseline_end')
         self.passed(**baseline)
 
-    def final_invariants(self):
-        self.begin('FINAL_INVARIANTS')
+    def checked_seed_coverage(self):
         component = self.component.evaluate('() => enterpriseStorageSoak.bounded("finish")')
         self.result['componentFinal'] = component
         coverage = self.result['coverage']
@@ -476,6 +525,11 @@ class BrowserSoakSuite(FaultSuite):
             assert coverage[name] == self.args.storage_cycles, (name, coverage[name])
         expected_native = 1 + self.args.ui_cycles // self.args.native_every
         assert coverage['genuineNativeRetries'] == coverage['controlledBusyRejections'] == expected_native
+        return coverage
+
+    def final_invariants(self):
+        self.begin('FINAL_INVARIANTS')
+        coverage = self.checked_seed_coverage()
         expected_errors = [message for message in self.result['consoleErrors']
                            if re.search(r'(?:status of 429|429 \(Too Many Requests\))', message)]
         unexpected = [message for message in self.result['consoleErrors'] if message not in expected_errors]
@@ -485,8 +539,25 @@ class BrowserSoakSuite(FaultSuite):
         assert self.result['sourceAfter'] == self.result['source'], 'SOURCE_CHANGED_DURING_RUN'
         self.result['storageFinal'] = self.storage_observation()
         elapsed = time.monotonic() - self.soak_started
-        assert elapsed >= self.args.duration_seconds, 'Requested observation window was shortened'
-        qualified = elapsed >= 600 and coverage['uiCycles'] >= 20 and coverage['componentCycles'] >= 300
+        qualified = False
+        if self.is_diagnostic:
+            phases = self.result['diagnostic']['phases']
+            assert all(phases.get(name, {}).get('status') == 'PASS' for name in
+                       ('seed', 'fixed_history', 'idle_recovery')), 'DIAGNOSTIC_PHASE_MISSING'
+            assert phases['fixed_history']['observedSeconds'] >= self.args.fixed_history_seconds
+            assert phases['idle_recovery']['observedSeconds'] >= self.args.recovery_seconds
+            self.result['observedDiagnosticSeconds'] = round(elapsed, 3)
+            self.result['soakQualification'] = 'NOT_MUTATION_SOAK'
+            self.result['diagnosticQualification'] = 'NOT_QUALIFIED_SHORT_RUN' if self.args.smoke else 'PASS_DIAGNOSTIC'
+        else:
+            assert elapsed >= self.args.duration_seconds, 'Requested observation window was shortened'
+            qualified = elapsed >= 600 and coverage['uiCycles'] >= 20 and coverage['componentCycles'] >= 300
+            for minute in range(int(self.args.duration_seconds // 60)):
+                assert self.activity_buckets.get(str(minute)), f'No actual operation in minute {minute}'
+            self.result['observedSoakSeconds'] = round(elapsed, 3)
+            self.result['soakQualification'] = 'PASS' if qualified and not self.args.smoke else 'NOT_QUALIFIED_SHORT_RUN'
+            if not self.args.smoke:
+                assert qualified
         self.result['activityTiming'] = {
             'operationSecondsByKind': {k: round(v, 3) for k, v in self.activity_seconds.items()},
             'totalOperationSeconds': round(sum(self.activity_seconds.values()), 3),
@@ -495,18 +566,138 @@ class BrowserSoakSuite(FaultSuite):
             'operationCountsByMinute': self.activity_buckets,
             'meaning': 'Measured UI/component/native operations include normal response waits. '
                        'Explicit cadence intervals are separate, not pressure activity.'}
-        for minute in range(int(self.args.duration_seconds // 60)):
-            assert self.activity_buckets.get(str(minute)), f'No actual operation in minute {minute}'
-        self.result['observedSoakSeconds'] = round(elapsed, 3)
         self.result['observationWindowEnded'] = True
-        self.result['soakQualification'] = 'PASS' if qualified and not self.args.smoke else 'NOT_QUALIFIED_SHORT_RUN'
-        if not self.args.smoke:
-            assert qualified
         self.result['resourceTrend'] = self.monitor.trend(self.baseline_elapsed)
         self.memory_observation('final_invariants')
         self.page.screenshot(path=str(self.evidence / 'final-ui.png'), full_page=True)
         self.passed(coverage=coverage, observedSeconds=round(elapsed, 3), soakQualified=qualified and not self.args.smoke,
                     componentAndPublicUiEvidenceSeparate=True, evidenceOfNoLeak='NOT_CLAIMED_FROM_FINITE_WINDOW')
+
+    def run_mutation_cycles(self, duration):
+        for number in range(1, self.args.ui_cycles + 1):
+            self.current_cycle = number
+            scheduled = self.soak_started + duration * (number - 1) / self.args.ui_cycles
+            self.operate_until(scheduled)
+            self.measured('complete_public_ui_cycle', lambda: self.cycle_ui(number))
+            target = math.floor(self.args.storage_cycles * number / self.args.ui_cycles)
+            window_end = self.soak_started + duration * number / self.args.ui_cycles
+            self.storage_batch(target - self.result['coverage']['componentCycles'], window_end)
+            if number % self.args.native_every == 0:
+                self.measured('controlled_busy_and_native_retry', self.native_round)
+            self.events.emit('ui_cycle_checkpoint', uiCycle=number, coverage=self.result['coverage'],
+                storage=self.storage_observation(), resources=self.monitor.trend(self.baseline_elapsed))
+            if number in {1, math.ceil(self.args.ui_cycles / 2), self.args.ui_cycles}:
+                self.page.screenshot(path=str(self.evidence / f'checkpoint-{number:03d}.png'), full_page=True)
+
+    def durable_fingerprint(self):
+        """Read-only counts and SHA-256 of every durable row in both history graphs."""
+        return self.page.evaluate('''async (names) => {
+          const observe = async () => {
+            const present = (await indexedDB.databases()).map(row => row.name).sort();
+            if (JSON.stringify(present) !== JSON.stringify([...names].sort()))
+              throw Error('DIAGNOSTIC_DATABASE_SET_CHANGED');
+            const output = {};
+            for (const name of [...names].sort()) {
+              const records = await new Promise((resolve, reject) => {
+                const request = indexedDB.open(name);
+                let upgradeRejected = false;
+                // Enumeration and open are separate operations: a vanished DB
+                // would otherwise be recreated by open(). Abort that upgrade.
+                request.onupgradeneeded = () => {
+                  upgradeRejected = true;
+                  const db = request.result;
+                  try { request.transaction.abort(); }
+                  finally { db.close(); reject(Error('DIAGNOSTIC_DATABASE_DISAPPEARED')); }
+                };
+                request.onerror = () => reject(Error('DIAGNOSTIC_DATABASE_READ_FAILED'));
+                request.onsuccess = () => {
+                  const db = request.result, stores = ['supplyStudies', 'supplySnapshots', 'pointers', 'audit'];
+                  if (upgradeRejected) { db.close(); return; }
+                  const tx = db.transaction(stores, 'readonly'), result = {};
+                  for (const store of stores) {
+                    const read = tx.objectStore(store).getAll();
+                    read.onsuccess = () => result[store] = read.result;
+                  }
+                  tx.oncomplete = () => { db.close(); resolve(result); };
+                  tx.onerror = tx.onabort = () => { db.close(); reject(Error('DIAGNOSTIC_READ_ABORTED')); };
+                };
+              });
+              output[name] = {};
+              for (const store of Object.keys(records).sort()) {
+                const bytes = new TextEncoder().encode(JSON.stringify(records[store]));
+                const digest = await crypto.subtle.digest('SHA-256', bytes);
+                output[name][store] = {count: records[store].length,
+                  sha256: [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')};
+              }
+            }
+            return output;
+          };
+          let timer;
+          try {
+            return await Promise.race([observe(), new Promise((_, reject) => {
+              timer = setTimeout(() => reject(Error('DIAGNOSTIC_FINGERPRINT_TIMEOUT')), 15000);
+            })]);
+          } finally { clearTimeout(timer); }
+        }''', ['stct-platform-v19-p5', self.result['componentBaseline']['database']])
+
+    @staticmethod
+    def assert_fixed_history(before, after, phase):
+        assert before == after, f'DIAGNOSTIC_DURABLE_HISTORY_CHANGED:{phase}'
+
+    def diagnostic_controls(self):
+        self.checked_seed_coverage()
+        self.guard()
+        seed_seconds = time.monotonic() - self.soak_started
+        self.result['diagnostic']['phases']['seed'] = {'status': 'PASS',
+            'observedSeconds': round(seed_seconds, 3), 'uiCycles': self.args.ui_cycles,
+            'componentCycles': self.args.storage_cycles, 'qualifiesMutationSoak': False}
+        self.diagnostic_phase = 'fixed_history'
+        self.begin('FIXED_HISTORY_READBACK')
+        baseline = self.durable_fingerprint()
+        self.result['diagnostic']['durableBaseline'] = baseline
+        self.phase_started = time.monotonic()
+        first = self.monitor.sample()
+        self.memory_observation('fixed_history_start')
+        before_probes = self.result['coverage']['uiDurabilityReopens']
+        self.operate_until(self.phase_started + self.args.fixed_history_seconds)
+        observed = time.monotonic() - self.phase_started
+        after_readback = self.durable_fingerprint()
+        self.assert_fixed_history(baseline, after_readback, 'fixed_history')
+        self.monitor.sample()
+        self.memory_observation('fixed_history_end')
+        counts = self.phase_activity_buckets.get('fixed_history', {})
+        for minute in range(max(1, int(self.args.fixed_history_seconds // 60))):
+            assert counts.get(str(minute), 0) > 0, f'DIAGNOSTIC_READBACK_MINUTE_EMPTY:{minute}'
+        self.result['diagnostic']['phases']['fixed_history'] = {'status': 'PASS',
+            'observedSeconds': round(observed, 3), 'publicReopens': self.result['coverage']['uiDurabilityReopens'] - before_probes,
+            'operationCountsByMinute': dict(counts), 'durableFingerprintUnchanged': True,
+            'durableAfter': after_readback,
+            'resourceTrend': self.monitor.trend(first['elapsedSeconds'])}
+        self.passed(**self.result['diagnostic']['phases']['fixed_history'])
+
+        self.diagnostic_phase = 'idle_recovery'
+        self.begin('NATURAL_IDLE_RECOVERY')
+        self.phase_started = time.monotonic()
+        first = self.monitor.sample()
+        self.memory_observation('idle_recovery_start')
+        before_coverage = dict(self.result['coverage'])
+        while time.monotonic() - self.phase_started < self.args.recovery_seconds:
+            self.guard()
+            self.page.wait_for_timeout(min(250, max(0, self.args.recovery_seconds - (time.monotonic() - self.phase_started)) * 1000))
+            if time.monotonic() >= self.next_memory_observation:
+                self.memory_observation('idle_recovery_observation')
+        observed = time.monotonic() - self.phase_started
+        self.monitor.sample()
+        self.memory_observation('idle_recovery_end')
+        recovery_trend = self.monitor.trend(first['elapsedSeconds'])
+        after_recovery = self.durable_fingerprint()
+        self.assert_fixed_history(baseline, after_recovery, 'idle_recovery')
+        assert before_coverage == self.result['coverage'], 'IDLE_RECOVERY_MUST_NOT_COUNT_PRESSURE_OPERATIONS'
+        self.result['diagnostic']['phases']['idle_recovery'] = {'status': 'PASS',
+            'observedSeconds': round(observed, 3), 'pressureOperations': 0,
+            'durableFingerprintUnchanged': True, 'durableAfter': after_recovery,
+            'forcedGC': False, 'resourceTrend': recovery_trend}
+        self.passed(**self.result['diagnostic']['phases']['idle_recovery'])
 
     def record_failure(self, exc):
         if not self.monitor.violation and not isinstance(exc, SoakDeadlineError):
@@ -579,26 +770,20 @@ class BrowserSoakSuite(FaultSuite):
                     self.idle_baseline()
                     self.page.screenshot(path=str(self.evidence / 'baseline-ui.png'), full_page=True)
                     self.soak_started = time.monotonic()
-                    self.events.emit('soak_window_start', coverage=self.result['coverage'])
-                    for number in range(1, self.args.ui_cycles + 1):
-                        self.current_cycle = number
-                        scheduled = self.soak_started + self.args.duration_seconds * (number - 1) / self.args.ui_cycles
-                        self.operate_until(scheduled)
-                        self.measured('complete_public_ui_cycle', lambda: self.cycle_ui(number))
-                        target = math.floor(self.args.storage_cycles * number / self.args.ui_cycles)
-                        window_end = self.soak_started + self.args.duration_seconds * number / self.args.ui_cycles
-                        self.storage_batch(target - self.result['coverage']['componentCycles'], window_end)
-                        if number % self.args.native_every == 0:
-                            self.measured('controlled_busy_and_native_retry', self.native_round)
-                        self.events.emit('ui_cycle_checkpoint', uiCycle=number, coverage=self.result['coverage'],
-                            storage=self.storage_observation(), resources=self.monitor.trend(self.baseline_elapsed))
-                        if number in {1, math.ceil(self.args.ui_cycles / 2), self.args.ui_cycles}:
-                            self.page.screenshot(path=str(self.evidence / f'checkpoint-{number:03d}.png'), full_page=True)
-                    # Extra public reopens and component history checks continue
-                    # actual operations through the end, without growing history.
-                    self.operate_until(self.soak_started + self.args.duration_seconds)
+                    self.diagnostic_phase = 'seed' if self.is_diagnostic else None
+                    self.diagnostic_pages = tuple(self.context.pages) if self.is_diagnostic else None
+                    self.phase_started = self.soak_started
+                    self.events.emit('diagnostic_seed_start' if self.is_diagnostic else 'soak_window_start',
+                                     coverage=self.result['coverage'])
+                    self.run_mutation_cycles(self.args.duration_seconds)
+                    if self.is_diagnostic:
+                        self.diagnostic_controls()
+                    else:
+                        # Continue actual readonly operations through the requested window.
+                        self.operate_until(self.soak_started + self.args.duration_seconds)
                     self.final_invariants()
-                    self.result['status'] = 'PASS'
+                    self.result['status'] = ('PASS_DIAGNOSTIC_SMOKE' if self.args.smoke else 'PASS_DIAGNOSTIC') \
+                        if self.is_diagnostic else 'PASS'
                 except BaseException as exc:
                     if isinstance(exc, (KeyboardInterrupt, SystemExit)) and self.monitor.violation:
                         exc = AssertionError(json.dumps(self.monitor.violation))
@@ -630,13 +815,18 @@ class BrowserSoakSuite(FaultSuite):
         self.write()
         print(self.scrub(json.dumps({'status': self.result['status'], 'source': self.result['source'],
             'coverage': self.result['coverage'], 'soakQualification': self.result.get('soakQualification', 'NOT_RUN')})))
-        return 0 if self.result['status'] == 'PASS' else 78 if self.result['status'] == 'BLOCKED_ENVIRONMENT' else 1
+        return 0 if self.result['status'] in ('PASS', 'PASS_DIAGNOSTIC', 'PASS_DIAGNOSTIC_SMOKE') \
+            else 78 if self.result['status'] == 'BLOCKED_ENVIRONMENT' else 1
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence-dir', type=Path, required=True)
-    parser.add_argument('--duration-seconds', type=float, default=720)
+    parser.add_argument('--workload-profile', choices=WORKLOAD_PROFILES, default='mutation-soak')
+    parser.add_argument('--duration-seconds', type=float, default=None)
+    parser.add_argument('--fixed-history-seconds', type=float, default=None)
+    parser.add_argument('--recovery-seconds', type=float, default=None)
+    parser.add_argument('--seed-max-seconds', type=float, default=None)
     parser.add_argument('--ui-cycles', type=int, default=30)
     parser.add_argument('--storage-cycles', type=int, default=600)
     parser.add_argument('--native-every', type=int, default=5)
@@ -649,11 +839,28 @@ def parse_args(argv=None):
                         help='Independent process watchdog; default 180 for smoke, duration+120 otherwise')
     parser.add_argument('--smoke', action='store_true', help='Allow short harness check; never qualifies as soak evidence')
     args = parser.parse_args(argv)
+    diagnostic = args.workload_profile == 'fixed-history-recovery'
+    if args.duration_seconds is None:
+        args.duration_seconds = 0 if diagnostic else 720
+    if diagnostic:
+        args.fixed_history_seconds = 360 if args.fixed_history_seconds is None else args.fixed_history_seconds
+        args.recovery_seconds = 180 if args.recovery_seconds is None else args.recovery_seconds
+        args.seed_max_seconds = 300 if args.seed_max_seconds is None else args.seed_max_seconds
+        values = (args.fixed_history_seconds, args.recovery_seconds, args.seed_max_seconds)
+        if not all(math.isfinite(value) and value > 0 for value in values) or sum(values) > 900:
+            parser.error('Diagnostic seed/readback/recovery bounds must be positive, finite and total <=900 seconds')
+        if args.seed_max_seconds > 300 or args.duration_seconds != 0:
+            parser.error('Diagnostic seed must be unpaced (--duration-seconds 0) with seed-max-seconds <=300')
+        if not args.smoke and (args.ui_cycles != 30 or args.storage_cycles != 600 or args.native_every != 5 or
+                               args.fixed_history_seconds < 360 or args.recovery_seconds < 180):
+            parser.error('Diagnostic requires exactly 30 UI/600 component seed, native-every 5, >=360s readback and >=180s recovery')
+    elif any(value is not None for value in (args.fixed_history_seconds, args.recovery_seconds, args.seed_max_seconds)):
+        parser.error('Diagnostic phase options require --workload-profile fixed-history-recovery')
     if not 1 <= args.ui_cycles <= 50 or not 1 <= args.storage_cycles <= 1000:
         parser.error('Bounded repetitions require 1..50 UI cycles and 1..1000 component cycles')
     if not math.isfinite(args.duration_seconds) or not 0 <= args.duration_seconds <= 900:
         parser.error('Duration must be a finite value from 0 to 900 seconds')
-    if not args.smoke and (args.duration_seconds < 600 or args.ui_cycles < 20 or args.storage_cycles < 300):
+    if not diagnostic and not args.smoke and (args.duration_seconds < 600 or args.ui_cycles < 20 or args.storage_cycles < 300):
         parser.error('Soak requires >=600 seconds, >=20 UI cycles, >=300 components; use --smoke for a short check')
     if not 1 <= args.native_every <= args.ui_cycles:
         parser.error('native-every must be within 1..ui-cycles')
@@ -665,9 +872,12 @@ def parse_args(argv=None):
     if not math.isfinite(args.sample_seconds) or not .25 <= args.sample_seconds <= 5:
         parser.error('Resource sampling must be every .25..5 seconds')
     if args.max_wall_seconds is None:
-        args.max_wall_seconds = 180 if args.smoke else args.duration_seconds + 120
+        args.max_wall_seconds = 180 if args.smoke else 960 if diagnostic else args.duration_seconds + 120
     if not math.isfinite(args.max_wall_seconds) or args.max_wall_seconds < max(30, args.duration_seconds):
         parser.error('max-wall-seconds must be finite and >= max(30, duration-seconds)')
+    if diagnostic and (args.max_wall_seconds > 960 or
+                       args.max_wall_seconds < sum(values) + 30):
+        parser.error('Diagnostic watchdog must cover all configured phase budgets plus 30 seconds, and may not exceed 960')
     evidence = args.evidence_dir.expanduser().resolve()
     if evidence == ROOT or ROOT in evidence.parents:
         parser.error('Evidence must be outside the checkout')
@@ -676,6 +886,164 @@ def parse_args(argv=None):
         parser.error('Use a fresh empty evidence directory; previous evidence is never overwritten')
     args.evidence_dir = evidence
     return args
+
+
+# Run without launching services/browser: python -m unittest discover -s tests
+# -p test_enterprise_browser_soak.py. These checks exercise the qualification
+# boundaries and tamper detection, not a substitute browser implementation.
+class DiagnosticProfileGuardTests(unittest.TestCase):
+    def parse(self, *flags):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory(prefix='browser-profile-guard-') as root:
+            with contextlib.redirect_stderr(io.StringIO()):
+                return parse_args(['--evidence-dir', str(Path(root) / 'evidence'), *flags])
+
+    def test_original_defaults_and_minimums_are_preserved(self):
+        args = self.parse()
+        self.assertEqual((args.workload_profile, args.duration_seconds, args.ui_cycles, args.storage_cycles),
+                         ('mutation-soak', 720, 30, 600))
+        self.assertEqual((args.max_rss_mib, args.max_wall_seconds), (1024, 840))
+        with self.assertRaises(SystemExit):
+            self.parse('--duration-seconds', '599')
+
+    def test_full_diagnostic_is_unpaced_and_has_bounded_controls(self):
+        args = self.parse('--workload-profile', 'fixed-history-recovery', '--memory-profile', 'hosted-2gib')
+        self.assertEqual((args.duration_seconds, args.fixed_history_seconds, args.recovery_seconds), (0, 360, 180))
+        self.assertEqual((args.ui_cycles, args.storage_cycles, args.native_every), (30, 600, 5))
+        self.assertEqual((args.seed_max_seconds, args.max_wall_seconds, args.max_rss_mib), (300, 960, 2048))
+
+    def test_short_controls_cannot_qualify_without_smoke(self):
+        for option, value in (('--fixed-history-seconds', '359'), ('--recovery-seconds', '179'),
+                              ('--ui-cycles', '29'), ('--storage-cycles', '599'), ('--native-every', '6')):
+            with self.subTest(option=option), self.assertRaises(SystemExit):
+                self.parse('--workload-profile', 'fixed-history-recovery', option, value)
+
+    def test_tiny_diagnostic_requires_explicit_smoke(self):
+        args = self.parse('--workload-profile', 'fixed-history-recovery', '--smoke', '--ui-cycles', '1',
+                          '--storage-cycles', '10', '--native-every', '1', '--fixed-history-seconds', '2',
+                          '--recovery-seconds', '2', '--seed-max-seconds', '60', '--max-wall-seconds', '180')
+        self.assertTrue(args.smoke)
+        self.assertEqual(args.duration_seconds, 0)
+
+    def test_diagnostic_cannot_relax_resource_or_time_bounds(self):
+        for option, value in (('--max-rss-mib', '2049'), ('--max-wall-seconds', '961'),
+                              ('--max-wall-seconds', '800'), ('--seed-max-seconds', '301'),
+                              ('--fixed-history-seconds', 'nan'), ('--recovery-seconds', '0'),
+                              ('--duration-seconds', '720'), ('--fixed-history-seconds', '600')):
+            with self.subTest(option=option, value=value), self.assertRaises(SystemExit):
+                self.parse('--workload-profile', 'fixed-history-recovery', '--memory-profile', 'hosted-2gib', option, value)
+
+    def test_diagnostic_options_cannot_modify_mutation_profile(self):
+        with self.assertRaises(SystemExit):
+            self.parse('--fixed-history-seconds', '360')
+
+    def test_durable_checks_reject_count_hash_and_pointer_changes(self):
+        before = {'ui': {'supplyStudies': {'count': 62, 'sha256': 'studies'},
+                         'pointers': {'count': 32, 'sha256': 'pointers'},
+                         'audit': {'count': 84, 'sha256': 'audit'}}}
+        BrowserSoakSuite.assert_fixed_history(before, json.loads(json.dumps(before)), 'unchanged')
+        for store, field_name, value in (('supplyStudies', 'count', 63), ('supplyStudies', 'sha256', 'mutated'),
+                                         ('pointers', 'sha256', 'changed-revision'), ('audit', 'count', 85)):
+            changed = json.loads(json.dumps(before))
+            changed['ui'][store][field_name] = value
+            with self.subTest(store=store, field=field_name), self.assertRaisesRegex(AssertionError, 'DURABLE_HISTORY_CHANGED'):
+                BrowserSoakSuite.assert_fixed_history(before, changed, 'control')
+
+    def test_missing_after_enumeration_aborts_controlled_upgrade_event(self):
+        """Controlled request events, explicitly not native-IDB/browser evidence."""
+        import ast
+        import inspect
+        import textwrap
+        method = ast.parse(textwrap.dedent(inspect.getsource(BrowserSoakSuite.durable_fingerprint)))
+        expression = next(node.args[0].value for node in ast.walk(method) if isinstance(node, ast.Call)
+                          and isinstance(node.func, ast.Attribute) and node.func.attr == 'evaluate')
+        fixture = '''
+          const names = ['component-test-only', 'ui-test-only'];
+          let opens = 0, aborts = 0, closes = 0, transactions = 0;
+          globalThis.indexedDB = {
+            databases: async () => names.map(name => ({name})),
+            open: name => {
+              opens++;
+              const request = {result: {close() { closes++; }, transaction() { transactions++; }},
+                transaction: {abort() { aborts++; queueMicrotask(() => request.onerror()); }}};
+              queueMicrotask(() => {
+                if (typeof request.onupgradeneeded !== 'function') throw Error('MISSING_UPGRADE_ABORT_GUARD');
+                request.onupgradeneeded({target: request});
+              });
+              return request;
+            }
+          };
+          fingerprint(names).then(() => { throw Error('MISSING_DATABASE_FALSE_SUCCESS'); }, error => {
+            if (error.message !== 'DIAGNOSTIC_DATABASE_DISAPPEARED' || opens !== 1 || aborts !== 1 || closes !== 1 || transactions !== 0)
+              throw Error(JSON.stringify({message: error.message, opens, aborts, closes, transactions}));
+            console.log('PASS_CONTROLLED_REQUEST_EVENT_NOT_NATIVE_IDB');
+          }).catch(error => { console.error(error); process.exitCode = 1; });
+        '''
+        checked = subprocess.run(['node', '-e', 'const fingerprint = ' + expression + ';\n' + fixture],
+                                 capture_output=True, text=True, timeout=10)
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        self.assertIn('PASS_CONTROLLED_REQUEST_EVENT_NOT_NATIVE_IDB', checked.stdout)
+
+    def test_final_qualification_follows_terminal_status(self):
+        expected = {'PASS_DIAGNOSTIC': 'PASS_DIAGNOSTIC', 'PASS_DIAGNOSTIC_SMOKE': 'NOT_QUALIFIED_SHORT_RUN',
+                    'FAIL': 'FAIL', 'BLOCKED_ENVIRONMENT': 'BLOCKED_ENVIRONMENT', 'RUNNING': 'RUNNING'}
+        for status, qualification in expected.items():
+            with self.subTest(status=status):
+                result = {'workloadProfile': 'fixed-history-recovery', 'status': status,
+                          'diagnosticQualification': 'PASS_DIAGNOSTIC', 'soakQualification': 'FAIL_WATCHDOG_OR_INTERRUPTION'}
+                finalize_diagnostic_qualification(result)
+                self.assertEqual(result['diagnosticQualification'], qualification)
+                self.assertEqual(result['soakQualification'], 'NOT_MUTATION_SOAK')
+        original = {'workloadProfile': 'mutation-soak', 'status': 'FAIL', 'soakQualification': 'FAIL_WATCHDOG_OR_INTERRUPTION'}
+        unchanged = dict(original)
+        finalize_diagnostic_qualification(original)
+        self.assertEqual(original, unchanged)
+
+    def test_worker_write_clears_stale_diagnostic_pass(self):
+        with tempfile.TemporaryDirectory(prefix='browser-final-status-') as root:
+            suite = BrowserSoakSuite.__new__(BrowserSoakSuite)
+            suite.evidence = Path(root)
+            suite.scrub = lambda value: value
+            suite.result = {'workloadProfile': 'fixed-history-recovery', 'status': 'FAIL',
+                            'diagnosticQualification': 'PASS_DIAGNOSTIC', 'soakQualification': 'PASS'}
+            suite.write()
+            result = json.loads((suite.evidence / 'summary.json').read_text())
+            self.assertEqual((result['status'], result['diagnosticQualification'], result['soakQualification']),
+                             ('FAIL', 'FAIL', 'NOT_MUTATION_SOAK'))
+
+    def test_supervisor_diagnostic_failure_and_blocked_paths(self):
+        import contextlib
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        for initial_status, code, reason, expected_status in (
+            ('FAIL', 1, None, 'FAIL'),
+            ('PASS_DIAGNOSTIC', 1, 'SOAK_WALL_CLOCK_DEADLINE_EXCEEDED', 'FAIL'),
+            ('RUNNING', 1, 'RESOURCE_UPPER_BOUND_EXCEEDED', 'BLOCKED_ENVIRONMENT'),
+            ('BLOCKED_ENVIRONMENT', 78, None, 'BLOCKED_ENVIRONMENT'),
+            (None, 1, None, 'FAIL'),
+        ):
+            with self.subTest(initial_status=initial_status, reason=reason), tempfile.TemporaryDirectory(prefix='browser-supervisor-status-') as root:
+                evidence, runtime = Path(root) / 'evidence', Path(root) / 'runtime'
+                evidence.mkdir(); runtime.mkdir()
+                if initial_status is not None:
+                    (evidence / 'summary.json').write_text(json.dumps({'status': initial_status,
+                        'workloadProfile': 'fixed-history-recovery', 'diagnosticQualification': 'PASS_DIAGNOSTIC',
+                        'soakQualification': 'PASS', 'soakWindowStarted': False, 'stages': {}}))
+                failure = {'reason': reason, 'ownedServiceCleanup': {'status': 'PASS'}} if reason else None
+                cleanup = {'status': 'PASS', 'remainingLiveProcesses': [], 'signals': []}
+                args = SimpleNamespace(workload_profile='fixed-history-recovery', evidence_dir=evidence, max_wall_seconds=960)
+                with patch(__name__ + '.tempfile.mkdtemp', return_value=str(runtime)), \
+                     patch(__name__ + '.subprocess.Popen', return_value=SimpleNamespace(pid=999999)), \
+                     patch(__name__ + '.supervise_process', return_value=(code, failure, cleanup)), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    returned = supervised_run(args, [])
+                result = json.loads((evidence / 'summary.json').read_text())
+                self.assertEqual(result['status'], expected_status)
+                self.assertEqual(result['diagnosticQualification'], expected_status)
+                self.assertEqual(result['soakQualification'], 'NOT_MUTATION_SOAK')
+                self.assertEqual(returned, 78 if expected_status == 'BLOCKED_ENVIRONMENT' else 1)
 
 
 def main():
@@ -714,6 +1082,7 @@ def supervised_run(args, argv):
             summary = json.loads(summary_path.read_text())
         except (OSError, ValueError):
             summary = {'status': 'FAIL', 'source': source_identity(ROOT), 'stages': {}}
+        summary.setdefault('workloadProfile', args.workload_profile)
         baseline_budget = failure.get('reason') in ('RESOURCE_UPPER_BOUND_EXCEEDED', 'RESOURCE_OBSERVATION_FAILED') \
                           and not summary.get('soakWindowStarted', False)
         cleanup_ok = failure.get('ownedServiceCleanup', {}).get('status') in ('PASS', 'NO_OWNERSHIP_RECEIPT') and process_cleanup['status'] == 'PASS'
@@ -721,7 +1090,8 @@ def supervised_run(args, argv):
         failure['runToken'] = runtime.name
         summary['supervisor'] = failure
         summary['ownedProcessCleanup'] = process_cleanup
-        summary['soakQualification'] = 'NOT_RUN_RESOURCE_BASELINE_BLOCKED' if baseline_budget else 'FAIL_WATCHDOG_OR_INTERRUPTION'
+        if summary.get('workloadProfile') != 'fixed-history-recovery':
+            summary['soakQualification'] = 'NOT_RUN_RESOURCE_BASELINE_BLOCKED' if baseline_budget else 'FAIL_WATCHDOG_OR_INTERRUPTION'
         summary.setdefault('stages', {})['SUPERVISOR'] = {'status': summary['status'], 'reason': failure['reason']}
         if not cleanup_ok:
             summary['stages']['CLEANUP'] = {'status': 'FAIL', 'details': failure['ownedServiceCleanup']}
@@ -737,16 +1107,27 @@ def supervised_run(args, argv):
             if source.exists():
                 (args.evidence_dir / ('supervisor-' + name)).write_text(
                     source.read_text(errors='replace').replace(str(runtime), '<runtime>').replace(str(ROOT), '<checkout>'))
+        finalize_diagnostic_qualification(summary)
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
         print(json.dumps({'status': summary['status'], 'supervisor': failure}), flush=True)
         return 78 if summary['status'] == 'BLOCKED_ENVIRONMENT' else 1
     summary_path = args.evidence_dir / 'summary.json'
     try:
         summary = json.loads(summary_path.read_text())
+        summary.setdefault('workloadProfile', args.workload_profile)
         summary['ownedProcessCleanup'] = process_cleanup
+        if args.workload_profile == 'fixed-history-recovery' and code != 0 and summary.get('status') not in ('FAIL', 'BLOCKED_ENVIRONMENT'):
+            summary['status'] = 'FAIL'
+        finalize_diagnostic_qualification(summary)
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
     except (OSError, ValueError):
         (args.evidence_dir / 'supervisor-process-cleanup.json').write_text(json.dumps(process_cleanup, indent=2) + '\n')
+        if args.workload_profile == 'fixed-history-recovery':
+            summary = {'status': 'FAIL', 'workloadProfile': args.workload_profile,
+                       'error': 'DIAGNOSTIC_SUMMARY_MISSING_OR_INVALID', 'ownedProcessCleanup': process_cleanup}
+            finalize_diagnostic_qualification(summary)
+            summary_path.write_text(json.dumps(summary, indent=2) + '\n')
+            code = 1
     if runtime.exists() and not any(runtime.iterdir()):
         runtime.rmdir()
     return code
