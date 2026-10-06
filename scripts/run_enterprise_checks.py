@@ -79,7 +79,7 @@ def main() -> int:
         run('build-identity', [sys.executable, 'scripts/update_build_identity.py', '--check'])
         for name in CORE_JS:
             run(name, ['node', 'tests/' + name])
-        for name in ('test_backend_build_fingerprint.py', 'test_checkout_line_endings.py', 'test_enterprise_admission.py',
+        for name in ('test_backend_build_fingerprint.py', 'test_checkout_line_endings.py', 'test_required_public_assets.py', 'test_enterprise_admission.py',
                      'test_enterprise_solver_lifecycle.py', 'test_enterprise_check_reporting.py'):
             run(name, [sys.executable, 'tests/' + name])
     if args.mode in ('native', 'all'):

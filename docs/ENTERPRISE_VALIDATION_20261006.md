@@ -40,6 +40,11 @@ service replacement, dependency installation on a workstation, or history rewrit
 
 ## Reproduction
 
+The first UI evidence also exposed a required-script 404: `index.html` already loaded
+`platform-map-showcase-v19.js`, but the exact public allowlist omitted that existing
+static module. Only that module is added; private resources remain denied. Required
+page-script/style regression and zero-console-error UI checks now cover the omission.
+
 The existing Windows command files had CRLF bytes in Git despite a text/eol=crlf
 checkout rule. They are normalized to LF in the Git index and remain CRLF in the
 checkout, without changing commands. A regression and read-only post-test Git diff

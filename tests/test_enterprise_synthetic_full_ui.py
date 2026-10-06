@@ -891,6 +891,7 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
                     self.cross_tab_conflict(current, branch_pointer)
                     self.stale_guard(current)
                     assert not self.result['pageErrors'], self.result['pageErrors']
+                    assert not self.result['consoleErrors'], self.result['consoleErrors']
                     self.result['status'] = 'PASS'
                 except Exception as exc:
                     self.record_failure(exc)

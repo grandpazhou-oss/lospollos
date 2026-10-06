@@ -117,6 +117,7 @@
     "platform-import-session-v19.js",
     "platform-map-adapters-v19.js",
     "platform-map-runtime-v19.js",
+    "platform-map-showcase-v19.js",
     "platform-map-v19.css",
     "platform-navigation-i18n-v19.js",
     "platform-navigation-performance-v19.js",

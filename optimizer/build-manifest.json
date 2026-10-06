@@ -55,7 +55,7 @@
     },
     {
       "path": "public-resources.json",
-      "sha256": "7f0664c86ebf416c340d7613206eba7c6ded6920f8ab7e8023b40c73d6904b20"
+      "sha256": "6ed421a2b6663a4a0d7647572fe4b9185bead163d1c22f1b27bfb3cebbb057d5"
     },
     {
       "path": "scripts/local_trial.py",
@@ -74,5 +74,5 @@
       "sha256": "92f26e26cfed3f0a25d56662012f180dcedc5388d6e4595a8d5f75317489fb82"
     }
   ],
-  "fingerprint": "fe2e9287daa901acc6338050d93a71a1637990785a548890591d4fa3bfd0c8be"
+  "fingerprint": "0f9857a7c66ea83deceb8f7826ba75c89d6a52c22839e88683a01fda58a1fe12"
 }
