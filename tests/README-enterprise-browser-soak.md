@@ -33,8 +33,9 @@ python -B tests/test_enterprise_browser_soak.py \
 
 Configuration:
 
-- `--workload-profile`: `mutation-soak` (default) or separately labeled
-  `fixed-history-recovery`; the latter is a diagnostic, not mutation-soak qualification
+- `--workload-profile`: `mutation-soak` (default), `fixed-history-recovery`
+  (fast seed), or `paced-history-recovery` (original 720-second seed cadence);
+  both history-recovery profiles are diagnostics, not mutation-soak qualification
 - `--duration-seconds`: 0–900 seconds; qualifying soak requires at least 600
 - `--ui-cycles`: 1–50; qualifying soak requires at least 20
 - `--storage-cycles`: 1–1000; qualifying soak requires at least 300
@@ -288,6 +289,66 @@ These test configuration boundaries, exact fingerprint tamper detection, a
 controlled missing-after-enumeration request event, and worker/supervisor terminal
 qualification. The controlled request event is not native-IDB/browser evidence;
 actual browser control execution still requires the approved runtime.
+
+## Separate paced-seed recovery diagnostic
+
+The `2f29dc0` fast-seed diagnostic remains **FAIL**. At 156.84 seconds, after
+24 completed UI cycles and 480 component cycles, aggregate RSS reached
+2,149,654,528 bytes, exceeding the unchanged 2,147,483,648-byte limit by 2,170,880
+bytes. The supervisor stopped that run and verified all 18 observed owned
+processes cleared. Neither the fixed-history nor idle-recovery phase ran. Its
+artifact and failure classification are preserved.
+
+`paced-history-recovery` is a separately named control using the original
+720-second mutation cadence to seed the same history before the existing
+360-second fixed-history and 180-second natural-idle controls:
+
+```sh
+python -B tests/test_enterprise_browser_soak.py \
+  --workload-profile paced-history-recovery --memory-profile hosted-2gib \
+  --duration-seconds 720 --ui-cycles 30 --storage-cycles 600 --native-every 5 \
+  --seed-max-seconds 900 --fixed-history-seconds 360 --recovery-seconds 180 \
+  --max-wall-seconds 1500 --evidence-dir /tmp/fresh-browser-paced-history
+```
+
+The exact original scheduler and strict seed checks are reused. Read-only public
+reopens and native full-history checks fill intervals between scheduled writes
+and any remainder of the requested 720-second seed window. Seed evidence includes
+requested and observed cadence, actual operation counts per minute and the same
+complete UI/component/native counts. In this diagnostic the seed is setup for
+the following controls and `qualifiesMutationSoak` remains false. It does not
+substitute for, repair or reclassify the failed fast-seed workload.
+
+The existing fixed-history fingerprints, missing-database upgrade-abort guard,
+same three page identities, profile/databases, exact-origin guard, 2 GiB ceiling,
+natural idle, CDP/protocol observations and failure-status normalization apply
+unchanged. No dispatcher retention setting, GC, trace, vendor code or application
+behavior is changed. Successful full/smoke diagnostics retain their distinct
+`PASS_DIAGNOSTIC` / `PASS_DIAGNOSTIC_SMOKE` statuses and `NOT_MUTATION_SOAK` label.
+
+Full paced seed cadence must be exactly 720 seconds with exactly 30 UI cycles,
+600 component cycles and native retry every five UI cycles. Its seed deadline is
+at most 900 seconds; seed/read/idle budgets total at most 1,470 seconds and the
+independent watchdog must cover those budgets plus 30 seconds, capped at 1,500
+seconds. The existing supervisor cleanup remains bounded by another 65 seconds;
+a 27-minute CI step leaves room for both. These bounds apply only to the paced
+profile. The original mutation profile defaults and fast diagnostic's 960-second
+watchdog ceiling remain unchanged.
+
+Tiny paced qualification is explicit and never qualifies as a full diagnostic:
+
+```sh
+python -B tests/test_enterprise_browser_soak.py \
+  --workload-profile paced-history-recovery --memory-profile hosted-2gib --smoke \
+  --duration-seconds 2 --ui-cycles 1 --storage-cycles 10 --native-every 1 \
+  --seed-max-seconds 60 --fixed-history-seconds 2 --recovery-seconds 2 \
+  --max-wall-seconds 180 --evidence-dir /tmp/fresh-browser-paced-history-smoke
+```
+
+The browser-free guard suite covers both diagnostic profiles, original defaults,
+short-cadence rejection outside smoke, distinct seed/watchdog limits, unchanged
+RSS bounds and all diagnostic terminal-status paths. Real paced-control results
+still require execution in the approved hosted runtime.
 
 ## Evidence, status and cleanup
 

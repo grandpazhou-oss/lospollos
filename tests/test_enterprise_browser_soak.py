@@ -34,7 +34,13 @@ from test_enterprise_ui_faults import FaultSuite
 
 
 MEMORY_PROFILES = {'standard-1gib': 1024, 'hosted-2gib': 2048}
-WORKLOAD_PROFILES = ('mutation-soak', 'fixed-history-recovery')
+DIAGNOSTIC_PROFILES = {
+    'fixed-history-recovery': {'seedCadenceSeconds': 0, 'seedMaxSeconds': 300,
+                               'phaseBudgetSeconds': 900, 'wallCapSeconds': 960},
+    'paced-history-recovery': {'seedCadenceSeconds': 720, 'seedMaxSeconds': 900,
+                               'phaseBudgetSeconds': 1470, 'wallCapSeconds': 1500},
+}
+WORKLOAD_PROFILES = ('mutation-soak', *DIAGNOSTIC_PROFILES)
 PRIOR_1GIB_EVIDENCE = {
     'checkout': 'bd9c019', 'artifact': 'enterprise-soak-preflight/browser/resources.jsonl',
     'archiveReference': 'ci-bd9c019/preflight/browser', 'elapsedSeconds': 2.196,
@@ -46,7 +52,7 @@ PRIOR_1GIB_EVIDENCE = {
 
 def finalize_diagnostic_qualification(summary):
     """Keep diagnostic qualification consistent with the latest terminal status."""
-    if summary.get('workloadProfile') != 'fixed-history-recovery':
+    if summary.get('workloadProfile') not in DIAGNOSTIC_PROFILES:
         return
     summary['soakQualification'] = 'NOT_MUTATION_SOAK'
     summary['diagnosticQualification'] = {
@@ -122,15 +128,17 @@ class BrowserSoakSuite(FaultSuite):
             self.result.update(method='SEEDED_FIXED_HISTORY_READBACK_AND_NATURAL_IDLE_RECOVERY',
                 soakQualification='NOT_MUTATION_SOAK', diagnosticQualification='NOT_RUN',
                 diagnostic={'seedMaxSeconds': args.seed_max_seconds,
+                    'seedCadenceSeconds': args.duration_seconds,
                     'fixedHistorySeconds': args.fixed_history_seconds, 'recoverySeconds': args.recovery_seconds,
-                    'seedMutationPacing': 'UNPACED_EXISTING_COMPLETE_UI_AND_COMPONENT_CHECKS',
+                    'seedMutationPacing': 'PACED_EXISTING_COMPLETE_UI_AND_COMPONENT_CHECKS' if args.duration_seconds else
+                                         'UNPACED_EXISTING_COMPLETE_UI_AND_COMPONENT_CHECKS',
                     'idleIsPressureActivity': False, 'phases': {}})
             self.result['stages'].update({name: {'status': 'NOT_RUN'} for name in
                                          ('FIXED_HISTORY_READBACK', 'NATURAL_IDLE_RECOVERY')})
 
     @property
     def is_diagnostic(self):
-        return self.args.workload_profile == 'fixed-history-recovery'
+        return self.args.workload_profile in DIAGNOSTIC_PROFILES
 
     def write(self):
         finalize_diagnostic_qualification(self.result)
@@ -648,9 +656,14 @@ class BrowserSoakSuite(FaultSuite):
         self.checked_seed_coverage()
         self.guard()
         seed_seconds = time.monotonic() - self.soak_started
+        assert seed_seconds >= self.args.duration_seconds, 'DIAGNOSTIC_SEED_CADENCE_SHORTENED'
+        seed_counts = self.phase_activity_buckets.get('seed', {})
+        for minute in range(int(self.args.duration_seconds // 60)):
+            assert seed_counts.get(str(minute), 0) > 0, f'DIAGNOSTIC_SEED_MINUTE_EMPTY:{minute}'
         self.result['diagnostic']['phases']['seed'] = {'status': 'PASS',
             'observedSeconds': round(seed_seconds, 3), 'uiCycles': self.args.ui_cycles,
-            'componentCycles': self.args.storage_cycles, 'qualifiesMutationSoak': False}
+            'componentCycles': self.args.storage_cycles, 'qualifiesMutationSoak': False,
+            'requestedCadenceSeconds': self.args.duration_seconds, 'operationCountsByMinute': dict(seed_counts)}
         self.diagnostic_phase = 'fixed_history'
         self.begin('FIXED_HISTORY_READBACK')
         baseline = self.durable_fingerprint()
@@ -777,6 +790,7 @@ class BrowserSoakSuite(FaultSuite):
                                      coverage=self.result['coverage'])
                     self.run_mutation_cycles(self.args.duration_seconds)
                     if self.is_diagnostic:
+                        self.operate_until(self.soak_started + self.args.duration_seconds)
                         self.diagnostic_controls()
                     else:
                         # Continue actual readonly operations through the requested window.
@@ -836,26 +850,32 @@ def parse_args(argv=None):
                         help='Optional tighter limit within the explicitly selected memory profile')
     parser.add_argument('--max-fds', type=int, default=1024)
     parser.add_argument('--max-wall-seconds', type=float, default=None,
-                        help='Independent process watchdog; default 180 for smoke, duration+120 otherwise')
+                        help='Independent watchdog: smoke 180s, mutation duration+120s, fast diagnostic 960s, paced diagnostic 1500s')
     parser.add_argument('--smoke', action='store_true', help='Allow short harness check; never qualifies as soak evidence')
     args = parser.parse_args(argv)
-    diagnostic = args.workload_profile == 'fixed-history-recovery'
+    diagnostic = DIAGNOSTIC_PROFILES.get(args.workload_profile)
     if args.duration_seconds is None:
-        args.duration_seconds = 0 if diagnostic else 720
+        args.duration_seconds = diagnostic['seedCadenceSeconds'] if diagnostic else 720
     if diagnostic:
         args.fixed_history_seconds = 360 if args.fixed_history_seconds is None else args.fixed_history_seconds
         args.recovery_seconds = 180 if args.recovery_seconds is None else args.recovery_seconds
-        args.seed_max_seconds = 300 if args.seed_max_seconds is None else args.seed_max_seconds
+        args.seed_max_seconds = diagnostic['seedMaxSeconds'] if args.seed_max_seconds is None else args.seed_max_seconds
         values = (args.fixed_history_seconds, args.recovery_seconds, args.seed_max_seconds)
-        if not all(math.isfinite(value) and value > 0 for value in values) or sum(values) > 900:
-            parser.error('Diagnostic seed/readback/recovery bounds must be positive, finite and total <=900 seconds')
-        if args.seed_max_seconds > 300 or args.duration_seconds != 0:
-            parser.error('Diagnostic seed must be unpaced (--duration-seconds 0) with seed-max-seconds <=300')
+        if not all(math.isfinite(value) and value > 0 for value in values) or sum(values) > diagnostic['phaseBudgetSeconds']:
+            parser.error(f"Diagnostic seed/readback/recovery bounds must be positive, finite and total <={diagnostic['phaseBudgetSeconds']} seconds")
+        if args.seed_max_seconds > diagnostic['seedMaxSeconds'] or args.seed_max_seconds < args.duration_seconds:
+            parser.error(f"Diagnostic seed-max-seconds must cover its cadence and may not exceed {diagnostic['seedMaxSeconds']}")
+        if args.workload_profile == 'fixed-history-recovery' and args.duration_seconds != 0:
+            parser.error('Fast diagnostic seed must be unpaced (--duration-seconds 0)')
+        if args.workload_profile == 'paced-history-recovery' and (
+                not math.isfinite(args.duration_seconds) or not 0 < args.duration_seconds <= 720 or
+                (not args.smoke and args.duration_seconds != 720)):
+            parser.error('Paced diagnostic requires the original 720-second cadence; only smoke may use a shorter positive cadence')
         if not args.smoke and (args.ui_cycles != 30 or args.storage_cycles != 600 or args.native_every != 5 or
                                args.fixed_history_seconds < 360 or args.recovery_seconds < 180):
             parser.error('Diagnostic requires exactly 30 UI/600 component seed, native-every 5, >=360s readback and >=180s recovery')
     elif any(value is not None for value in (args.fixed_history_seconds, args.recovery_seconds, args.seed_max_seconds)):
-        parser.error('Diagnostic phase options require --workload-profile fixed-history-recovery')
+        parser.error('Diagnostic phase options require a named history-recovery workload profile')
     if not 1 <= args.ui_cycles <= 50 or not 1 <= args.storage_cycles <= 1000:
         parser.error('Bounded repetitions require 1..50 UI cycles and 1..1000 component cycles')
     if not math.isfinite(args.duration_seconds) or not 0 <= args.duration_seconds <= 900:
@@ -872,12 +892,12 @@ def parse_args(argv=None):
     if not math.isfinite(args.sample_seconds) or not .25 <= args.sample_seconds <= 5:
         parser.error('Resource sampling must be every .25..5 seconds')
     if args.max_wall_seconds is None:
-        args.max_wall_seconds = 180 if args.smoke else 960 if diagnostic else args.duration_seconds + 120
+        args.max_wall_seconds = 180 if args.smoke else diagnostic['wallCapSeconds'] if diagnostic else args.duration_seconds + 120
     if not math.isfinite(args.max_wall_seconds) or args.max_wall_seconds < max(30, args.duration_seconds):
         parser.error('max-wall-seconds must be finite and >= max(30, duration-seconds)')
-    if diagnostic and (args.max_wall_seconds > 960 or
+    if diagnostic and (args.max_wall_seconds > diagnostic['wallCapSeconds'] or
                        args.max_wall_seconds < sum(values) + 30):
-        parser.error('Diagnostic watchdog must cover all configured phase budgets plus 30 seconds, and may not exceed 960')
+        parser.error(f"Diagnostic watchdog must cover all configured phase budgets plus 30 seconds, and may not exceed {diagnostic['wallCapSeconds']}")
     evidence = args.evidence_dir.expanduser().resolve()
     if evidence == ROOT or ROOT in evidence.parents:
         parser.error('Evidence must be outside the checkout')
@@ -925,6 +945,40 @@ class DiagnosticProfileGuardTests(unittest.TestCase):
                           '--recovery-seconds', '2', '--seed-max-seconds', '60', '--max-wall-seconds', '180')
         self.assertTrue(args.smoke)
         self.assertEqual(args.duration_seconds, 0)
+
+    def test_paced_profile_preserves_original_cadence_and_separate_bounds(self):
+        args = self.parse('--workload-profile', 'paced-history-recovery', '--memory-profile', 'hosted-2gib')
+        self.assertEqual((args.duration_seconds, args.seed_max_seconds, args.max_wall_seconds), (720, 900, 1500))
+        self.assertEqual((args.ui_cycles, args.storage_cycles, args.native_every), (30, 600, 5))
+        self.assertEqual((args.fixed_history_seconds, args.recovery_seconds, args.max_rss_mib), (360, 180, 2048))
+        fast = self.parse('--workload-profile', 'fixed-history-recovery')
+        self.assertEqual((fast.duration_seconds, fast.seed_max_seconds, fast.max_wall_seconds), (0, 300, 960))
+        with self.assertRaises(SystemExit):
+            self.parse('--workload-profile', 'fixed-history-recovery', '--max-wall-seconds', '1500')
+
+    def test_paced_tiny_qualification_requires_explicit_smoke(self):
+        flags = ('--workload-profile', 'paced-history-recovery', '--duration-seconds', '2',
+                 '--ui-cycles', '1', '--storage-cycles', '10', '--native-every', '1',
+                 '--fixed-history-seconds', '2', '--recovery-seconds', '2', '--seed-max-seconds', '60',
+                 '--max-wall-seconds', '180')
+        with self.assertRaises(SystemExit):
+            self.parse(*flags)
+        args = self.parse(*flags, '--smoke')
+        self.assertTrue(args.smoke)
+        self.assertEqual((args.duration_seconds, args.max_wall_seconds), (2, 180))
+
+    def test_paced_profile_rejects_shortened_full_cadence_and_expanded_budgets(self):
+        for option, value in (('--duration-seconds', '0'), ('--duration-seconds', '719'),
+                              ('--duration-seconds', '721'), ('--duration-seconds', 'nan'),
+                              ('--seed-max-seconds', '901'), ('--seed-max-seconds', '719'),
+                              ('--max-wall-seconds', '1501'), ('--max-wall-seconds', '1469'),
+                              ('--fixed-history-seconds', '1000'), ('--fixed-history-seconds', '359'),
+                              ('--recovery-seconds', '179'), ('--storage-cycles', '599'),
+                              ('--max-rss-mib', '2049')):
+            with self.subTest(option=option, value=value), self.assertRaises(SystemExit):
+                self.parse('--workload-profile', 'paced-history-recovery', '--memory-profile', 'hosted-2gib', option, value)
+        with self.assertRaises(SystemExit):
+            self.parse('--workload-profile', 'paced-history-recovery', '--smoke', '--duration-seconds', '0')
 
     def test_diagnostic_cannot_relax_resource_or_time_bounds(self):
         for option, value in (('--max-rss-mib', '2049'), ('--max-wall-seconds', '961'),
@@ -988,9 +1042,10 @@ class DiagnosticProfileGuardTests(unittest.TestCase):
     def test_final_qualification_follows_terminal_status(self):
         expected = {'PASS_DIAGNOSTIC': 'PASS_DIAGNOSTIC', 'PASS_DIAGNOSTIC_SMOKE': 'NOT_QUALIFIED_SHORT_RUN',
                     'FAIL': 'FAIL', 'BLOCKED_ENVIRONMENT': 'BLOCKED_ENVIRONMENT', 'RUNNING': 'RUNNING'}
-        for status, qualification in expected.items():
-            with self.subTest(status=status):
-                result = {'workloadProfile': 'fixed-history-recovery', 'status': status,
+        for profile, status, qualification in ((profile, status, value) for profile in DIAGNOSTIC_PROFILES
+                                                for status, value in expected.items()):
+            with self.subTest(profile=profile, status=status):
+                result = {'workloadProfile': profile, 'status': status,
                           'diagnosticQualification': 'PASS_DIAGNOSTIC', 'soakQualification': 'FAIL_WATCHDOG_OR_INTERRUPTION'}
                 finalize_diagnostic_qualification(result)
                 self.assertEqual(result['diagnosticQualification'], qualification)
@@ -1017,23 +1072,26 @@ class DiagnosticProfileGuardTests(unittest.TestCase):
         import io
         from types import SimpleNamespace
         from unittest.mock import patch
-        for initial_status, code, reason, expected_status in (
+        cases = (
             ('FAIL', 1, None, 'FAIL'),
             ('PASS_DIAGNOSTIC', 1, 'SOAK_WALL_CLOCK_DEADLINE_EXCEEDED', 'FAIL'),
             ('RUNNING', 1, 'RESOURCE_UPPER_BOUND_EXCEEDED', 'BLOCKED_ENVIRONMENT'),
             ('BLOCKED_ENVIRONMENT', 78, None, 'BLOCKED_ENVIRONMENT'),
             (None, 1, None, 'FAIL'),
-        ):
-            with self.subTest(initial_status=initial_status, reason=reason), tempfile.TemporaryDirectory(prefix='browser-supervisor-status-') as root:
+        )
+        for profile, initial_status, code, reason, expected_status in (
+                (profile, *case) for profile in DIAGNOSTIC_PROFILES for case in cases):
+            with self.subTest(profile=profile, initial_status=initial_status, reason=reason), tempfile.TemporaryDirectory(prefix='browser-supervisor-status-') as root:
                 evidence, runtime = Path(root) / 'evidence', Path(root) / 'runtime'
                 evidence.mkdir(); runtime.mkdir()
                 if initial_status is not None:
                     (evidence / 'summary.json').write_text(json.dumps({'status': initial_status,
-                        'workloadProfile': 'fixed-history-recovery', 'diagnosticQualification': 'PASS_DIAGNOSTIC',
+                        'workloadProfile': profile, 'diagnosticQualification': 'PASS_DIAGNOSTIC',
                         'soakQualification': 'PASS', 'soakWindowStarted': False, 'stages': {}}))
                 failure = {'reason': reason, 'ownedServiceCleanup': {'status': 'PASS'}} if reason else None
                 cleanup = {'status': 'PASS', 'remainingLiveProcesses': [], 'signals': []}
-                args = SimpleNamespace(workload_profile='fixed-history-recovery', evidence_dir=evidence, max_wall_seconds=960)
+                args = SimpleNamespace(workload_profile=profile, evidence_dir=evidence,
+                                       max_wall_seconds=DIAGNOSTIC_PROFILES[profile]['wallCapSeconds'])
                 with patch(__name__ + '.tempfile.mkdtemp', return_value=str(runtime)), \
                      patch(__name__ + '.subprocess.Popen', return_value=SimpleNamespace(pid=999999)), \
                      patch(__name__ + '.supervise_process', return_value=(code, failure, cleanup)), \
@@ -1090,7 +1148,7 @@ def supervised_run(args, argv):
         failure['runToken'] = runtime.name
         summary['supervisor'] = failure
         summary['ownedProcessCleanup'] = process_cleanup
-        if summary.get('workloadProfile') != 'fixed-history-recovery':
+        if summary.get('workloadProfile') not in DIAGNOSTIC_PROFILES:
             summary['soakQualification'] = 'NOT_RUN_RESOURCE_BASELINE_BLOCKED' if baseline_budget else 'FAIL_WATCHDOG_OR_INTERRUPTION'
         summary.setdefault('stages', {})['SUPERVISOR'] = {'status': summary['status'], 'reason': failure['reason']}
         if not cleanup_ok:
@@ -1116,13 +1174,13 @@ def supervised_run(args, argv):
         summary = json.loads(summary_path.read_text())
         summary.setdefault('workloadProfile', args.workload_profile)
         summary['ownedProcessCleanup'] = process_cleanup
-        if args.workload_profile == 'fixed-history-recovery' and code != 0 and summary.get('status') not in ('FAIL', 'BLOCKED_ENVIRONMENT'):
+        if args.workload_profile in DIAGNOSTIC_PROFILES and code != 0 and summary.get('status') not in ('FAIL', 'BLOCKED_ENVIRONMENT'):
             summary['status'] = 'FAIL'
         finalize_diagnostic_qualification(summary)
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
     except (OSError, ValueError):
         (args.evidence_dir / 'supervisor-process-cleanup.json').write_text(json.dumps(process_cleanup, indent=2) + '\n')
-        if args.workload_profile == 'fixed-history-recovery':
+        if args.workload_profile in DIAGNOSTIC_PROFILES:
             summary = {'status': 'FAIL', 'workloadProfile': args.workload_profile,
                        'error': 'DIAGNOSTIC_SUMMARY_MISSING_OR_INVALID', 'ownedProcessCleanup': process_cleanup}
             finalize_diagnostic_qualification(summary)

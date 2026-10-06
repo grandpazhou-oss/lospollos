@@ -1,6 +1,6 @@
 # Sustained validation after the 6caba33 acceptance snapshot
 
-Status: **first native progressive window passed at `aaefcfb`; fixed-size continuation pending**. Dated outcomes below are tied to immutable hosted artifacts; the remaining plan is not test evidence.
+Status: **native progressive and fixed-size windows passed; browser stability remains open after a rapid-seed budget failure**. Dated outcomes below are tied to immutable hosted artifacts; the paced continuation is not yet test evidence.
 
 The completed `6caba338c5a8020848bbdbb7c6bcb51faf94ea51` acceptance artifact remains immutable. Sustained-load evidence belongs to a later exact commit and must not overwrite or retroactively relabel that snapshot. This work follows the user's explicit request to continue testing and stress testing on 2026-10-06.
 
@@ -24,7 +24,7 @@ The completed `6caba338c5a8020848bbdbb7c6bcb51faf94ea51` acceptance artifact rem
 
 ## CI execution and evidence
 
-A real-native short smoke and a short browser smoke validate the new harness before long execution; neither qualifies as a completed soak. The read-only workflow runs the sustained job only on pushes to the validation branch after the ordinary checks succeed, avoiding a duplicate long run on the matching PR event. Its job safety timeout is 60 minutes. Evidence is written outside the checkout and uploaded as separate `enterprise-native-soak` and `enterprise-browser-soak` artifacts. Every summary must state actual source SHA, dirty state, duration, cycles, fault counts, observed resource peaks/trends and cleanup outcome. GitHub's seven-day artifact retention is not a permanent backup.
+A real-native short smoke and a short browser smoke validate the new harness before long execution; neither qualifies as a completed soak. The read-only workflow runs the sustained job only on pushes to the validation branch after the ordinary checks succeed, avoiding a duplicate long run on the matching PR event. Its current job safety timeout is 75 minutes to accommodate a native rerun when required plus the longer paced browser control; individual process/step bounds remain explicit. Evidence is written outside the checkout and uploaded as separately named native/browser artifacts. Every summary must state actual source SHA, dirty state, duration, cycles, fault counts, observed resource peaks/trends and cleanup outcome. GitHub's seven-day artifact retention is not a permanent backup.
 
 The existing v1.8 six-to-eight-hour overnight harness uses a different Network model and historical run inventories. It is not silently substituted for this service/browser soak, and this first window does not close that historical acceptance item.
 
@@ -53,6 +53,16 @@ The observer rejected a newly forked worker's command during cancellation setup,
 Failure summaries now finalize completed load counts and the actual active elapsed time rather than leaving the prior progress checkpoint. Controlled identity/metric cases and the owned-process reproduction are explicitly non-native evidence. A bounded CI self-test gate runs these ownership and coverage guards before either native qualification. This harness repair does not change product code, admission, solver constraints, workload gates or the original failed artifact; a new complete fixed window is still required.
 
 The independent browser comparison completed at 05:01:37 UTC with 722.741 measured seconds and the same 30 UI / 600 component writes. Functional checks and normal cleanup passed, as did all three subsequent COMMAND repeats and the source-cleanliness check. Boolean JSHandles stayed at zero after the public disposal correction, but Python test RSS still grew 129,249,280 bytes versus 133,316,608 bytes before it. Request/Response/Route protocol objects each grew from 406 to 6076; ElementHandles grew from 25 to 325, with no pending callbacks. Peak aggregate RSS was 2,103,111,680 bytes under the unchanged 2 GiB ceiling. These observations do not close stability or attribute the whole memory increase to the application. A separately labeled fixed-history replay followed by ordinary idle recovery is the next control, preserving the original mutation-soak mode and its evidence.
+
+### Completed fixed native window and preserved rapid-seed failure
+
+At `2f29dc0a3348475953d70cac48038fc8648fe95f`, [run 37418185263](https://github.com/grandpazhou-oss/lospollos/actions/runs/37418185263) completed the fixed native step on 2026-10-06 at 06:04:29 UTC: 1868.150 active seconds, 172 cycles, 688 synchronous and 344 jobs successes, 2189 HTTP 429 refusals and maximum observed native concurrency one. The backend stayed uninterrupted for 1868.708 seconds; all 8983 resource rows reconciled and cleanup passed. Peak aggregate RSS was 287,444,992 bytes. Warm idle means rose 150.82 to 167.13 MB; segmented trends vary, so qualification PASS is not a flat-memory or leak-free claim.
+
+The following unpaced browser seed **failed** at 156.846 seconds: after 24 UI / 480 component cycles, aggregate RSS reached 2,149,654,528 bytes, exceeding the unchanged 2 GiB ceiling by 2,170,880 bytes. The supervisor stopped the run and all 18 observed owned processes were recovered. Neither fixed-history replay nor idle recovery began. This remains an independent known fast-burst failure; later slower tests cannot relabel it as passing.
+
+The next separately named `paced-history-recovery` profile establishes the identical 30 UI / 600 component history with the previously tested 720-second cadence, then performs 360 seconds of readback and 180 seconds of ordinary idle. It keeps the same pages, databases, network restrictions, data checks and 2 GiB ceiling. Its seed budget is 900 seconds, independent watchdog at most 1500 seconds, and CI step 27 minutes including at most 65 seconds of verified-process cleanup. The original fast profile keeps its 300-second seed / 960-second watchdog bounds. Idle is not pressure activity; diagnostics are not relabeled mutation soaks.
+
+Current core/native checks and both short native profiles still execute on each source head. The additional 31-minute native window is omitted only when Git blobs/path sets, manifest-covered runtime files, native harness/payloads and native command/runner/interpreter/dependency declarations match the immutable verified `2f29dc0` source. The scope record says `NOT_RUN_UNCHANGED_VERIFIED_NATIVE_SOURCE`, never a new-head long-window PASS. Native changes, protected renames/deletions, missing comparison data or dirty source require the full window. This avoids repeating an unchanged native experiment for a browser-only pacing change while preserving its exact prior evidence.
 
 ## Unchanged implementation limits
 
