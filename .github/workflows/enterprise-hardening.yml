@@ -114,7 +114,7 @@ jobs:
     env:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
-      ENTERPRISE_OBSERVATION_PROFILE: python-allocation-only
+      ENTERPRISE_OBSERVATION_PROFILE: business-ui-gaps-only
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -147,16 +147,18 @@ jobs:
           root = Path(os.environ['RUNNER_TEMP']) / 'enterprise-soak-preflight'
           native = json.loads((root / 'native-scope.json').read_text())
           profile = os.environ['ENTERPRISE_OBSERVATION_PROFILE']
-          assert profile in ('paced-history-recovery', 'wait-path-ab-only', 'ui-wait-mutation-only', 'python-allocation-only'), profile
+          assert profile in ('paced-history-recovery', 'wait-path-ab-only', 'ui-wait-mutation-only', 'python-allocation-only', 'business-ui-gaps-only'), profile
           if profile != 'paced-history-recovery':
               assert native['nativeLongRequired'] is False, 'Focused browser diagnostics require verified unchanged native source'
           focused = profile != 'paced-history-recovery'
           omission = {'wait-path-ab-only': 'NOT_RUN_AB_ONLY', 'ui-wait-mutation-only': 'NOT_RUN_WAIT_REPAIR_ONLY',
-                      'python-allocation-only': 'NOT_RUN_ALLOCATION_ONLY'}.get(profile)
+                      'python-allocation-only': 'NOT_RUN_ALLOCATION_ONLY',
+                      'business-ui-gaps-only': 'NOT_RUN_BUSINESS_UI_GAPS_ONLY'}.get(profile)
           result = {'profile': profile, 'sourceCommit': native['sourceCommit'],
                     'classification': {'wait-path-ab-only': 'WAIT_IMPLEMENTATION_COMPONENT_DIAGNOSTIC_NOT_PRODUCT_ACCEPTANCE',
                                        'ui-wait-mutation-only': 'SINGLE_FIXED_UI_WAIT_REPAIR_MUTATION_WINDOW',
                                        'python-allocation-only': 'MATCHED_PYTHON_ALLOCATION_OBSERVER_DIAGNOSTIC',
+                                       'business-ui-gaps-only': 'TWO_ORIGINAL_ACCEPTANCE_BUSINESS_UI_GAPS',
                                        'paced-history-recovery': 'HISTORY_RECOVERY_DIAGNOSTIC'}[profile],
                     'ordinaryCurrentHeadNativeBrowserAndUiChecksRequired': True,
                     'additionalNativePreflights': omission if focused else 'REQUIRED',
@@ -166,7 +168,8 @@ jobs:
                     'additionalCommandRepeats': omission if focused else 'REQUIRED',
                     'waitPathComponentAB': 'REQUIRED' if profile == 'wait-path-ab-only' else 'NOT_RUN_NOT_SELECTED',
                     'uiWaitMutationWindow': 'REQUIRED_ONCE_720S_30_UI_600_IDB' if profile == 'ui-wait-mutation-only' else 'NOT_RUN_NOT_SELECTED',
-                    'pythonAllocationPair': 'REQUIRED_ONCE_FIXED_FIVE_CYCLE_PREFIX_OFF_ON' if profile == 'python-allocation-only' else 'NOT_RUN_NOT_SELECTED'}
+                    'pythonAllocationPair': 'REQUIRED_ONCE_FIXED_FIVE_CYCLE_PREFIX_OFF_ON' if profile == 'python-allocation-only' else 'NOT_RUN_NOT_SELECTED',
+                    'businessUIGaps': ['B6_DELAYED_DURABLE_SAVE_RECEIPT', 'D8_SAME_PAGE_OWNED_BACKEND_RESTART'] if profile == 'business-ui-gaps-only' else 'NOT_RUN_NOT_SELECTED'}
           (root / 'observation-scope.json').write_text(json.dumps(result, indent=2) + '\n')
           print(json.dumps(result))
           PYCODE
@@ -245,6 +248,60 @@ jobs:
         with:
           name: enterprise-python-allocation-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-python-allocation
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Business UI gap bounds and failure guards (not browser execution)
+        id: ui_gap_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'business-ui-gaps-only' }}
+        run: python -B -m unittest discover -s tests -p test_enterprise_ui_acceptance_gaps.py -v
+      - name: B6 delayed genuine durable save receipt and public study switch
+        id: delayed_save_ui
+        timeout-minutes: 6
+        if: ${{ !cancelled() && steps.ui_gap_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_ui_acceptance_gaps.py --case delayed-save --evidence-dir "$RUNNER_TEMP/enterprise-ui-delayed-save"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'business-ui-gaps-only' }}
+        with:
+          name: enterprise-ui-delayed-save-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-ui-delayed-save
+          retention-days: 7
+          if-no-files-found: warn
+      - name: D8 same-page genuine native worker backend restart and retry
+        timeout-minutes: 6
+        if: ${{ !cancelled() && steps.ui_gap_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          try:
+              prior = json.loads((root / 'enterprise-ui-delayed-save' / 'summary.json').read_text())
+              assert prior['status'] in ('PASS', 'FAIL', 'BLOCKED_ENVIRONMENT')
+              cleanup = prior['ownedProcessCleanup']
+              assert cleanup['status'] == 'PASS'
+              assert cleanup['remainingLiveProcesses'] == [] and cleanup['remainingZombies'] == []
+              assert cleanup['forcedTerminationUsed'] is False and cleanup['signalErrors'] == []
+              assert prior['stages']['CLEANUP']['status'] == 'PASS'
+              assert prior['source']['actualSHA'] == source
+              assert prior['source']['dirty'] is False
+          except (OSError, ValueError, KeyError, TypeError, AssertionError):
+              target = root / 'enterprise-ui-backend-restart'
+              target.mkdir(exist_ok=True)
+              (target / 'summary.json').write_text(json.dumps({
+                  'status': 'NOT_RUN', 'reason': 'PRIOR_CASE_OWNERSHIP_CLEANUP_UNCONFIRMED',
+                  'source': {'actualSHA': source}, 'browserStarted': False,
+                  'backendStarted': False}, indent=2) + '\n')
+              print('NOT_RUN: B6 owned-process cleanup must be confirmed before D8 starts')
+              sys.exit(1)
+          PYCODE
+          python -B tests/test_enterprise_ui_acceptance_gaps.py --case backend-restart --evidence-dir "$RUNNER_TEMP/enterprise-ui-backend-restart"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'business-ui-gaps-only' }}
+        with:
+          name: enterprise-ui-backend-restart-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-ui-backend-restart
           retention-days: 7
           if-no-files-found: warn
       - name: Native soak harness preflight (not a completed soak)
