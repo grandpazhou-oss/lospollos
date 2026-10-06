@@ -128,6 +128,29 @@ to median. No GC is injected, no test action mutates the app in that idle interv
 and no resource limit is adjusted to fit observed usage. Summed RSS conservatively double-counts
 shared pages, and includes the test driver/instrumentation. It is not PSS.
 
+Before that baseline, a separate 32-handle control proves that real Playwright
+`wait_for_function` results register as protocol handles, and that disposing all
+32 returns the handle count to its exact prior value. The public navigation/reopen
+helpers dispose their consumed boolean wait results. This addresses test-owned
+handle lifetime; the control does not attribute all observed RSS growth to handles.
+Once per minute and at the final invariant check, `memory_diagnostic` JSONL records
+the installed Python Playwright protocol-object registry counts, pending callback
+count, resource-sample retention count, and existing log-file sizes. Short-lived
+read-only CDP sessions collect heap, document, DOM-node and listener counters for
+each page and detach immediately. Renderer metrics may cover shared work; they
+are not independent per-page RSS. There is no forced GC, heap snapshot, continuous
+trace, browser/profile restart, extra application mutation, or changed resource
+ceiling. The original load schedule and coverage gates remain unchanged.
+
+The original `aaefcfb` hosted run passed its functional and upper-bound checks but
+left a memory-stability question open: aggregate RSS peaked at 2,119,540,736 bytes,
+leaving only 27,942,912 bytes below the unchanged 2 GiB limit. Python harness RSS
+rose by 133,316,608 bytes; Chrome and driver growth are separately recorded. A
+same-load hosted comparison is required to measure the handle-lifetime correction.
+Finite functional success and remaining under the ceiling do not establish
+memory stability or absence of a product leak. If growth remains unresolved,
+separate fixed-history readback and recovery observations are the next controls.
+
 The suite stops above its explicitly named aggregate RSS budget (default 1 GiB,
 independent `hosted-2gib` 2 GiB), >1024 aggregate FDs, >3 tabs, an unhandled
 browser error, inconsistent data, false success, or a missing required check.

@@ -125,7 +125,9 @@ def step(page, index):
 
 def route_to(page, route):
     page.locator(f'button[data-platform-route="{route}"]:visible').first.click()
-    page.wait_for_function('(r) => location.hash.split("?")[0] === "#" + r', arg=route)
+    # Playwright retains returned JSHandles until explicitly disposed, even when
+    # the caller only needed the wait and discards its boolean result.
+    page.wait_for_function('(r) => location.hash.split("?")[0] === "#" + r', arg=route).dispose()
 
 
 def login(page, url):
@@ -609,7 +611,7 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
         page.wait_for_function('''() => {
             const tab = document.querySelector('[data-supply-action="step"][aria-current="step"]');
             return tab && tab.dataset.supplyId !== '0';
-        }''')
+        }''').dispose()
         return wait_state(page, lambda s: (s.get('savedPointer') or {}).get('id') == pointer_id)
 
     def public_history(self, page, pointer_id):

@@ -9,6 +9,7 @@ cycles. --smoke explicitly exercises the harness without claiming soak coverage.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import math
 import os
@@ -64,6 +65,7 @@ class BrowserSoakSuite(FaultSuite):
         self.activity_seconds = {}
         self.activity_buckets = {}
         self.controlled_interval_seconds = 0.0
+        self.next_memory_observation = 0.0
         self.result.update(suite='ENTERPRISE_BROWSER_STORAGE_SOAK', source=source_identity(ROOT),
             method='BOUNDED_PUBLIC_UI_SOAK_PLUS_SEPARATE_NATIVE_INDEXEDDB_COMPONENT',
             requested={'durationSeconds': args.duration_seconds, 'uiCycles': args.ui_cycles,
@@ -85,7 +87,7 @@ class BrowserSoakSuite(FaultSuite):
                       'componentFullHistoryProbes': 0},
             stages={name: {'status': 'NOT_RUN'} for name in (
                 'DEPENDENCIES', 'LAUNCHER', 'BROWSER', 'IMPORT_MAPPING_UNITS', 'MISSING_CRS_GUARD',
-                'COMPONENT_SETUP', 'INITIAL_NATIVE_RETRY', 'IDLE_BASELINE', 'UI_SOAK', 'COMPONENT_SOAK',
+                'COMPONENT_SETUP', 'INITIAL_NATIVE_RETRY', 'HANDLE_LIFETIME_CONTROL', 'IDLE_BASELINE', 'UI_SOAK', 'COMPONENT_SOAK',
                 'CONTROLLED_429_BUSY', 'PERIODIC_NATIVE_RETRY', 'FINAL_INVARIANTS', 'CLEANUP')},
             notCovered=['COMMAND_MANUAL_APPLY_CANCEL_NOT_REPEATED_THIS_SUITE', 'REAL_DISK_QUOTA_EXHAUSTION',
                 'REAL_OSRM', 'PRIVATE_DATA', 'WINDOWS_OR_MACOS_REAL_MACHINE', 'BROWSER_PROCESS_RESTART',
@@ -296,7 +298,60 @@ class BrowserSoakSuite(FaultSuite):
         counts = self.activity_buckets.setdefault(str(bucket), {})
         counts[kind] = counts.get(kind, 0) + 1
         self.events.emit('operation_timing', operation=kind, seconds=round(elapsed, 4), minuteBucket=bucket)
+        if time.monotonic() >= self.next_memory_observation:
+            self.memory_observation(kind)
         return value
+
+    def protocol_object_counts(self):
+        # Read-only diagnostic of this installed Playwright version. These are
+        # protocol-object counts, not Python heap bytes or application objects.
+        connection = self.page._impl_obj._connection
+        counts = Counter(value._type for value in connection._objects.values())
+        return {'total': sum(counts.values()), 'byType': dict(sorted(counts.items())),
+                'pendingCallbacks': len(connection._callbacks),
+                'method': 'READ_ONLY_PLAYWRIGHT_PRIVATE_PROTOCOL_REGISTRY'}
+
+    def handle_lifetime_control(self):
+        self.begin('HANDLE_LIFETIME_CONTROL')
+        before = self.protocol_object_counts()
+        handles = []
+        try:
+            for _ in range(32):
+                handles.append(self.page.wait_for_function('() => true'))
+            retained = self.protocol_object_counts()
+            assert retained['byType'].get('JSHandle', 0) == before['byType'].get('JSHandle', 0) + 32
+        finally:
+            for handle in handles:
+                handle.dispose()
+        released = self.protocol_object_counts()
+        assert released['byType'].get('JSHandle', 0) == before['byType'].get('JSHandle', 0), \
+            'Disposing consumed wait handles did not restore the protocol registry'
+        self.result['handleLifetimeControl'] = {'createdHandles': 32, 'before': before,
+            'retained': retained, 'released': released, 'forcedGC': False,
+            'interpretation': 'Proves handle registration/release only; does not attribute total RSS growth'}
+        self.passed(**self.result['handleLifetimeControl'])
+
+    def memory_observation(self, label):
+        pages = {}
+        for name, page in (('primary', self.page), ('secondary', self.secondary), ('component', self.component)):
+            session = self.context.new_cdp_session(page)
+            try:
+                session.send('Performance.enable')
+                metrics = {row['name']: row['value'] for row in session.send('Performance.getMetrics')['metrics']}
+                selected = ('JSHeapUsedSize', 'JSHeapTotalSize', 'Documents', 'Nodes', 'JSEventListeners')
+                pages[name] = {'performance': {key: metrics[key] for key in selected if key in metrics},
+                               'dom': session.send('Memory.getDOMCounters')}
+            finally:
+                session.detach()
+        self.events.emit('memory_diagnostic', label=label, uiCycle=self.current_cycle,
+            componentCycles=self.result['coverage']['componentCycles'],
+            protocolObjects=self.protocol_object_counts(), pages=pages,
+            collector={'retainedResourceSamples': len(self.monitor.samples),
+                       'resourceJsonlBytes': self.monitor.log.path.stat().st_size,
+                       'cycleJsonlBytes': self.events.path.stat().st_size,
+                       'continuousTrace': False},
+            forcedGC=False, interpretation='Read-only counters; DOM/heap metrics may include shared renderer work')
+        self.next_memory_observation = time.monotonic() + 60
 
     def durability_probe(self):
         before = state(self.page)
@@ -401,6 +456,7 @@ class BrowserSoakSuite(FaultSuite):
         self.result['idleResourceBaseline'] = baseline
         self.result['resourceBaseline'] = last
         self.baseline_elapsed = last['elapsedSeconds']
+        self.memory_observation('idle_baseline_end')
         self.passed(**baseline)
 
     def final_invariants(self):
@@ -447,6 +503,7 @@ class BrowserSoakSuite(FaultSuite):
         if not self.args.smoke:
             assert qualified
         self.result['resourceTrend'] = self.monitor.trend(self.baseline_elapsed)
+        self.memory_observation('final_invariants')
         self.page.screenshot(path=str(self.evidence / 'final-ui.png'), full_page=True)
         self.passed(coverage=coverage, observedSeconds=round(elapsed, 3), soakQualified=qualified and not self.args.smoke,
                     componentAndPublicUiEvidenceSeparate=True, evidenceOfNoLeak='NOT_CLAIMED_FROM_FINITE_WINDOW')
@@ -518,6 +575,7 @@ class BrowserSoakSuite(FaultSuite):
                     login(self.secondary, self.base)
                     self.reopen_public(self.secondary, self.master_id)
                     self.result['storageBaseline'] = self.storage_observation()
+                    self.handle_lifetime_control()
                     self.idle_baseline()
                     self.page.screenshot(path=str(self.evidence / 'baseline-ui.png'), full_page=True)
                     self.soak_started = time.monotonic()
