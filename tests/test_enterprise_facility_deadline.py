@@ -83,22 +83,28 @@ class FacilityDeadlineTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'FACILITY_TIME_LIMIT_INVALID')
 
     def test_real_manager_reports_partial_for_no_candidate_budget_result(self):
-        spec = make_job(self.payload, 1)
-        result = facility.solve_facility(spec['requests'][0]['payload'], None, 'CONTROLLED_NO_NATIVE',
-                                         deadline=time.monotonic() - .1)
-        events = [{'event': 'STARTED'}, {'event': 'PHASE', 'phase': 'CANDIDATES'},
-                  {'event': 'RESULT', 'phase': 'CANDIDATES', 'result': result},
-                  {'event': 'BUDGET_EXHAUSTED'}, {'event': 'COMPLETE'}]
-        manager = jobs.JobManager()
-        with patch.object(jobs, 'check_dependencies'), controlled(program(events)):
-            started = manager.start(spec)
-            final = await_done(manager, started['jobId'])
-        self.assertEqual(final['status'], 'PARTIAL')
-        self.assertEqual(final['exitCode'], 0)
-        self.assertEqual(final['feasible'], 0)
-        self.assertEqual(final['results']['CANDIDATES']['results'], [])
-        self.assertIsNone(final['error'])
-        self.assertFalse(manager.admission.busy)
+        # The large case exceeds ordinary pipe capacities on Linux and Windows.
+        # A controlled child must consume the manager's real input protocol, not
+        # emit canned events and exit while its parent is still writing stdin.
+        for payload in (self.payload, make_payloads(200, 10, 1)['/facility-optimize-v19']):
+            with self.subTest(demands=len(payload['demands']), sites=len(payload['sites'])):
+                spec = make_job(payload, 1)
+                result = facility.solve_facility(spec['requests'][0]['payload'], None, 'CONTROLLED_NO_NATIVE',
+                                                 deadline=time.monotonic() - .1)
+                events = [{'event': 'STARTED'}, {'event': 'PHASE', 'phase': 'CANDIDATES'},
+                          {'event': 'RESULT', 'phase': 'CANDIDATES', 'result': result},
+                          {'event': 'BUDGET_EXHAUSTED'}, {'event': 'COMPLETE'}]
+                worker = 'import json,sys\njson.loads(sys.stdin.readline())\n' + program(events)
+                manager = jobs.JobManager()
+                with patch.object(jobs, 'check_dependencies'), controlled(worker):
+                    started = manager.start(spec)
+                    final = await_done(manager, started['jobId'])
+                self.assertEqual(final['status'], 'PARTIAL', final)
+                self.assertEqual(final['exitCode'], 0, final)
+                self.assertEqual(final['feasible'], 0, final)
+                self.assertEqual(final['results']['CANDIDATES']['results'], [], final)
+                self.assertIsNone(final['error'], final)
+                self.assertFalse(manager.admission.busy, final)
 
 
 if __name__ == '__main__':
