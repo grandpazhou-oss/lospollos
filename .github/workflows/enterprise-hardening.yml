@@ -105,7 +105,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
   stress-soak:
-    name: Sustained native and browser load
+    name: Bounded additional diagnostic profile
     # Run once for an explicit validation-branch push, not again on its PR event.
     if: ${{ !cancelled() && needs.core.result == 'success' && needs['native-browser'].result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/codex/enterprise-validation-20261006' }}
     needs: [core, native-browser]
@@ -114,6 +114,7 @@ jobs:
     env:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
+      ENTERPRISE_OBSERVATION_PROFILE: wait-path-ab-only
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -127,14 +128,38 @@ jobs:
           node-version: '22.16.0'
       - name: Existing approved dependencies on ephemeral hosted runner
         run: python -m pip install 'ortools==9.15.6755' 'playwright==1.57.0'
-      - name: Verify runtime identity before sustained load
+      - name: Verify runtime identity before additional diagnostic
         run: python scripts/update_build_identity.py --check
       - name: Select native long-window scope against verified immutable source
         id: native_scope
         timeout-minutes: 2
         run: |
+          git fetch --no-tags --depth=1 origin 2f29dc0a3348475953d70cac48038fc8648fe95f
           python scripts/select_enterprise_native_soak.py --self-test
           python scripts/select_enterprise_native_soak.py --output "$RUNNER_TEMP/enterprise-soak-preflight/native-scope.json"
+      - name: Record explicit additional-diagnostic scope
+        id: observation_scope
+        timeout-minutes: 2
+        run: |
+          python - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'enterprise-soak-preflight'
+          native = json.loads((root / 'native-scope.json').read_text())
+          profile = os.environ['ENTERPRISE_OBSERVATION_PROFILE']
+          assert profile in ('paced-history-recovery', 'wait-path-ab-only'), profile
+          if profile == 'wait-path-ab-only':
+              assert native['nativeLongRequired'] is False, 'AB-only requires verified unchanged native source'
+          result = {'profile': profile, 'sourceCommit': native['sourceCommit'],
+                    'classification': 'WAIT_IMPLEMENTATION_COMPONENT_DIAGNOSTIC_NOT_PRODUCT_ACCEPTANCE' if profile == 'wait-path-ab-only' else 'HISTORY_RECOVERY_DIAGNOSTIC',
+                    'ordinaryCurrentHeadNativeBrowserAndUiChecksRequired': True,
+                    'additionalNativeAndBrowserPreflights': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'REQUIRED',
+                    'nativeLongWindow': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else native['status'],
+                    'pacedHistoryLongWindow': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'REQUIRED',
+                    'additionalCommandRepeats': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'REQUIRED'}
+          (root / 'observation-scope.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result))
+          PYCODE
       - name: Native harness ownership and coverage guards (not native solving)
         id: native_harness_guards
         timeout-minutes: 2
@@ -148,13 +173,30 @@ jobs:
       - name: Existing approved Chromium on ephemeral runner
         if: ${{ !cancelled() }}
         run: python -m playwright install --with-deps chromium
+      - name: Wait-path A/B pure bounds and result guards (not browser execution)
+        id: wait_path_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'wait-path-ab-only' }}
+        run: python -B tests/test_enterprise_wait_path_ab.py --self-test --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/wait-path-guards"
+      - name: Actual Chromium wait-path A/B with bounded synthetic DOM
+        # 180s external watchdog plus at most 65s verified-process cleanup.
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.wait_path_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_wait_path_ab.py --memory-profile hosted-2gib --generations 32 --idle-seconds 60 --max-wall-seconds 180 --evidence-dir "$RUNNER_TEMP/enterprise-wait-path-ab"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'wait-path-ab-only' }}
+        with:
+          name: enterprise-wait-path-ab-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-wait-path-ab
+          retention-days: 7
+          if-no-files-found: warn
       - name: Native soak harness preflight (not a completed soak)
         id: native_smoke
         timeout-minutes: 5
-        if: ${{ !cancelled() && steps.native_harness_guards.outcome == 'success' }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.native_harness_guards.outcome == 'success' }}
         run: python tests/test_enterprise_native_soak.py --duration-seconds 90 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/native"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
         with:
           name: enterprise-native-preflight-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-soak-preflight/native
@@ -163,10 +205,10 @@ jobs:
       - name: Fixed large native profile preflight (not a completed soak)
         id: native_fixed_smoke
         timeout-minutes: 5
-        if: ${{ !cancelled() && steps.native_harness_guards.outcome == 'success' }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.native_harness_guards.outcome == 'success' }}
         run: python tests/test_enterprise_native_soak.py --workload-profile fixed-large --duration-seconds 90 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/native-fixed"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
         with:
           name: enterprise-native-fixed-preflight-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-soak-preflight/native-fixed
@@ -175,17 +217,17 @@ jobs:
       - name: Browser soak harness preflight (not a completed soak)
         id: browser_smoke
         timeout-minutes: 5
-        if: ${{ !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
         run: python tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser"
       - name: Fixed-history browser diagnostic preflight (not a completed control)
         id: browser_diagnostic_smoke
         timeout-minutes: 5
-        if: ${{ !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
         run: python tests/test_enterprise_browser_soak.py --workload-profile fixed-history-recovery --memory-profile hosted-2gib --smoke --ui-cycles 1 --storage-cycles 10 --native-every 1 --fixed-history-seconds 2 --recovery-seconds 2 --seed-max-seconds 60 --max-wall-seconds 180 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser-diagnostic"
       - name: Paced-history browser diagnostic preflight (not a completed control)
         id: browser_paced_smoke
         timeout-minutes: 5
-        if: ${{ !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_harness_guards.outcome == 'success' }}
         run: python tests/test_enterprise_browser_soak.py --workload-profile paced-history-recovery --memory-profile hosted-2gib --smoke --duration-seconds 2 --ui-cycles 1 --storage-cycles 10 --native-every 1 --fixed-history-seconds 2 --recovery-seconds 2 --seed-max-seconds 60 --max-wall-seconds 180 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser-paced"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -196,10 +238,10 @@ jobs:
           if-no-files-found: warn
       - name: Thirty-one-minute fixed large native load without backend restart
         timeout-minutes: 36
-        if: ${{ !cancelled() && steps.native_smoke.outcome == 'success' && steps.native_fixed_smoke.outcome == 'success' && steps.native_scope.outputs.native_long_required != 'false' }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.native_smoke.outcome == 'success' && steps.native_fixed_smoke.outcome == 'success' && steps.native_scope.outputs.native_long_required != 'false' }}
         run: python tests/test_enterprise_native_soak.py --workload-profile fixed-large --duration-seconds 1860 --evidence-dir "$RUNNER_TEMP/enterprise-native-soak"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: ${{ always() && steps.native_scope.outputs.native_long_required != 'false' }}
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && steps.native_scope.outputs.native_long_required != 'false' }}
         with:
           name: enterprise-native-fixed-soak-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-native-soak
@@ -208,10 +250,10 @@ jobs:
       - name: Paced history seed then fixed-history replay and ordinary idle recovery
         # 1500s worker watchdog plus at most 65s of verified-process cleanup.
         timeout-minutes: 27
-        if: ${{ !cancelled() && steps.browser_smoke.outcome == 'success' && steps.browser_diagnostic_smoke.outcome == 'success' && steps.browser_paced_smoke.outcome == 'success' }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() && steps.browser_smoke.outcome == 'success' && steps.browser_diagnostic_smoke.outcome == 'success' && steps.browser_paced_smoke.outcome == 'success' }}
         run: python tests/test_enterprise_browser_soak.py --workload-profile paced-history-recovery --memory-profile hosted-2gib --duration-seconds 720 --fixed-history-seconds 360 --recovery-seconds 180 --seed-max-seconds 900 --max-wall-seconds 1500 --evidence-dir "$RUNNER_TEMP/enterprise-browser-paced-diagnostic"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
         with:
           name: enterprise-browser-paced-diagnostic-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-browser-paced-diagnostic
@@ -219,14 +261,14 @@ jobs:
           if-no-files-found: warn
       - name: Three independent COMMAND UI repetition cycles
         timeout-minutes: 7
-        if: ${{ !cancelled() }}
+        if: ${{ env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' && !cancelled() }}
         shell: bash
         run: |
           for cycle in 1 2 3; do
             python tests/test_enterprise_command_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-command-repeat/cycle-$cycle"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'paced-history-recovery' }}
         with:
           name: enterprise-command-repeat-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-command-repeat
