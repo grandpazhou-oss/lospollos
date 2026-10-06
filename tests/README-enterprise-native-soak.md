@@ -149,6 +149,19 @@ or idle-reclamation timeouts stop the run and clean up only owned processes.
 Signals use pidfd plus PID/start-time/command verification. The free-port probe uses the HTTP server’s SO_REUSEADDR policy and verifies bind plus listen, so a closed owned server’s TIME_WAIT connection does not masquerade as a live listener. SO_REUSEPORT is never enabled. Active listeners, including a separate owned-PID control, and non-reusable bound sockets must still be rejected. Protected service
 ports 8787, 8877, 8791, 8766, 8788 and 19095 are refused.
 
+A newly forked worker can briefly retain its backend's command before exec, or
+expose an empty command during exec. After verifying the backend PID/start time
+and the child's PPID, the observer allows at most 50 ms to observe the expected
+worker command on the same child PID/start time and under the same live backend.
+Ownership is recorded only after that command is verified. An unrelated command,
+changed identity/parent, or stable empty/inherited command fails the run; only a
+verified child exit/zombie ends the retry without adoption. Live resource read
+failures remain fatal. Transition events contain command classifications and
+SHA-256 hashes, PID/start time/PPID, elapsed retry time and outcome, never raw argv.
+Owned fork/exec self-tests reproduce the original pre-exec rejection and verify
+the bounded transition; controlled guards cover foreign commands, PID reuse,
+parent changes, empty commands and exited children. They do not run a solver.
+
 Completed jobs are retained by count, not TTL: 15 old completed jobs before a
 new admission, at most 16 including the newest. Real old-job404 probes verify the
 bound. RSS reporting compares warmed idle windows after retention-table filling;
@@ -173,6 +186,11 @@ compact verification counts, not repeated 200-demand payloads or large traces.
 SELF_TEST_PASS_NOT_NATIVE and SMOKE_PASS_NOT_30_MINUTE_SOAK remain distinct from a
 full-duration PASS. Coverage, cleanup, native dependency and resource assertions
 must all pass before the process exits zero.
+On failure, summary.cycles is finalized from the completed mixed-load counter,
+including a cycle whose subsequent fault check failed. If the active window
+started, activeSeconds and failureActiveSeconds record its elapsed time at failure
+rather than retaining the previous checkpoint; pre-active failures invent no
+active duration. Partial work never changes a FAIL into PASS.
 Pure self-tests cover both profile schedules and qualification guards, excluded
 coverage, and same-row resource aggregation; these controlled fixtures do not
 constitute native workload evidence.

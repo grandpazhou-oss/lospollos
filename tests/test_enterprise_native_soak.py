@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import traceback
 import uuid
 
@@ -235,6 +236,82 @@ def same_process(identity, current=None):
     return bool(current and current['startTicks'] == identity['startTicks'])
 
 
+def worker_command_snapshot(value, expected, backend_identity, *, snapshot_reader, identity_reader=None,
+                            observe=None, wait_seconds=.05):
+    """Allow only a verified backend child's bounded inherited-argv/exec gap.
+
+    A candidate is not owned until its expected worker command is observed.
+    Every retry preserves the child and parent identities. Unknown commands,
+    stable empty/inherited commands and identity/parent changes fail closed.
+    """
+    identity_reader = identity_reader or proc_identity
+    before = dict(value)
+    started = time.monotonic()
+
+    def parent_is_owned(current=None):
+        parent = identity_reader(backend_identity['pid']) if backend_identity else None
+        valid = (parent is not None and same_process(backend_identity, parent) and parent['state'] != 'Z'
+                 and (current is None or current['ppid'] == backend_identity['pid']))
+        if not valid:
+            observation('REJECTED_PARENT_IDENTITY')
+        require(valid,
+                'Refusing ownership of a worker not parented by our verified backend')
+
+    def observation(outcome):
+        if observe:
+            def classification(command):
+                return ('UNREADABLE' if command is None else 'EMPTY' if command == '' else
+                        'EXPECTED_WORKER' if expected in command else 'INHERITED_BACKEND'
+                        if backend_identity and command == backend_identity.get('command') else 'UNEXPECTED')
+            command = before['command']
+            current_command = value.get('command') if value is not None else None
+            observe({'pid': before['pid'], 'startTicks': before['startTicks'], 'ppid': before['ppid'],
+                     'initialCommandState': classification(command),
+                     'initialCommandSha256': hashlib.sha256((command or '').encode()).hexdigest(),
+                     'currentCommandState': classification(current_command),
+                     'currentCommandSha256': hashlib.sha256((current_command or '').encode()).hexdigest(),
+                     'outcome': outcome, 'waitSeconds': round(time.monotonic() - started, 6)})
+
+    parent_is_owned(value)
+    if expected in (value['command'] or ''):
+        return value
+    observation('COMMAND_MISMATCH_OBSERVED')
+    while True:
+        command = value['command']
+        if not (command == '' or (backend_identity.get('command') and command == backend_identity['command'])):
+            observation('REJECTED_UNEXPECTED_COMMAND')
+            raise ProcObserverError(f'PROC_OBSERVER_UNEXPECTED_WORKER_COMMAND pid={before["pid"]} startTicks={before["startTicks"]}')
+        if time.monotonic() - started >= wait_seconds:
+            observation('LIVE_COMMAND_MISMATCH')
+            raise ProcObserverError(f'PROC_OBSERVER_LIVE_COMMAND_MISMATCH pid={before["pid"]} '
+                                    f'startTicks={before["startTicks"]}')
+        time.sleep(.001)
+        parent_is_owned()
+        value = snapshot_reader(before['pid'])
+        if value is None:
+            current = identity_reader(before['pid'])
+            if current is not None:
+                observation('REJECTED_IDENTITY_CHANGE_OR_UNREADABLE')
+            require(current is None, 'PROC_OBSERVER_WORKER_IDENTITY_CHANGED_OR_UNREADABLE_DURING_EXEC')
+            observation('VERIFIED_EXIT_GONE')
+            return None
+        same = value['pid'] == before['pid'] and value['startTicks'] == before['startTicks']
+        if not same:
+            observation('REJECTED_IDENTITY_CHANGE')
+        require(same,
+                'PROC_OBSERVER_WORKER_IDENTITY_CHANGED_DURING_EXEC')
+        parent_is_owned(value)
+        if value['state'] == 'Z':
+            observation('VERIFIED_EXIT_ZOMBIE')
+            return None
+        if expected in (value['command'] or ''):
+            if time.monotonic() - started > wait_seconds:
+                observation('TRANSITION_DEADLINE_EXCEEDED')
+                raise ProcObserverError('PROC_OBSERVER_WORKER_COMMAND_TRANSITION_EXCEEDED_DEADLINE')
+            observation('EXPECTED_WORKER_COMMAND')
+            return value
+
+
 def choose_port(requested):
     require(requested not in PROTECTED_PORTS, 'Refusing a protected port')
     require(0 <= requested <= 65535, 'Invalid port')
@@ -379,6 +456,7 @@ class NativeSoak:
         self.backend = None
         self.backend_identity = None
         self.backend_started = None
+        self.active_started = None
         self.instance = None
         self.generations = []
         self.owned = {}
@@ -446,6 +524,11 @@ class NativeSoak:
             # A zombie has no usable cmdline/fds and must never be newly claimed.
             return None
         expected = str(ROOT / 'optimizer' / ('ortools_service.py' if role == 'backend' else 'supply_chain_job_worker_v6.py'))
+        if role == 'worker' and expected not in (value['command'] or ''):
+            value = worker_command_snapshot(value, expected, self.backend_identity, snapshot_reader=self.snapshot,
+                                            observe=lambda row: self.evidence.event('worker_command_transition', **row))
+            if value is None:
+                return None
         require(expected in value['command'], 'Refusing ownership of an unexpected process command')
         with self.owned_lock:
             old = self.owned.get(pid)
@@ -999,7 +1082,7 @@ class NativeSoak:
         self.verify_exit(self.backend.pid)
         self.start_backend()
         self.monitor.start()
-        active_start = time.monotonic()
+        active_start = self.active_started = time.monotonic()
         active_identity, active_instance = dict(self.backend_identity), self.instance
         fixed = self.args.workload_profile == 'fixed-large'
         self.evidence.event('active_window_started', targetSeconds=self.args.duration_seconds,
@@ -1063,6 +1146,13 @@ class NativeSoak:
                 'idlePlatformWindows': self.plateau_report(), **profile_scope(self.args.workload_profile, self.args.duration_seconds),
                 'coverageAssertionsPassed': True}
 
+    def failure_progress(self, now=None):
+        progress = {'cycles': self.evidence.counts['cycles']}
+        if self.active_started is not None:
+            active = round((time.monotonic() if now is None else now) - self.active_started, 3)
+            progress.update(activeSeconds=active, failureActiveSeconds=active)
+        return progress
+
     def cleanup(self):
         self.monitor_stop.set()
         if self.monitor.is_alive():
@@ -1117,6 +1207,149 @@ def proc_observer_self_test():
     require(not resource_calls and value['fds'] is None, 'Zombie attempted fd enumeration')
     checked.append('known_zombie_skips_resource_reads')
     return {'evidenceClass': 'CONTROLLED_PROC_READER_NOT_NATIVE', 'checks': checked}
+
+
+def worker_command_self_test():
+    parent = {'pid': 100, 'startTicks': 2, 'state': 'S', 'command': 'python CONTROLLED_BACKEND'}
+    child = {'pid': 101, 'ppid': 100, 'startTicks': 3, 'state': 'R', 'command': parent['command']}
+    expected = 'CONTROLLED_WORKER'
+    ready = {**child, 'command': 'python ' + expected}
+    checks = []
+
+    def case(name, initial, after, *, parent_after=None, child_after=None, rejected=False, exited=False,
+             immediate=False, snapshot_delay=0):
+        events, reads = [], []
+        parent_reads = 0
+        def identity_reader(pid):
+            nonlocal parent_reads
+            if pid == parent['pid']:
+                parent_reads += 1
+                return parent_after if parent_reads > 1 and parent_after is not None else parent
+            return child_after
+        def snapshot_reader(pid):
+            reads.append(pid)
+            if snapshot_delay:
+                time.sleep(snapshot_delay)
+            return after
+        try:
+            value = worker_command_snapshot(initial, expected, parent, snapshot_reader=snapshot_reader,
+                                            identity_reader=identity_reader, observe=events.append, wait_seconds=.005)
+        except (AssertionError, ProcObserverError):
+            require(rejected, 'Unexpected rejection in command guard case: ' + name)
+        else:
+            require(not rejected, 'Command guard admitted: ' + name)
+            require(value is None if exited else value == ready, 'Incorrect command guard result: ' + name)
+        if immediate:
+            require(not reads, 'Foreign command/parent was retried: ' + name)
+        require(events and all('command' not in row and len(row['initialCommandSha256']) == 64 for row in events),
+                'Command-transition diagnostic missing or exposed raw command')
+        checks.append(name)
+
+    case('inherited_backend_then_expected_worker', child, ready)
+    case('empty_exec_command_then_expected_worker', {**child, 'command': ''}, ready)
+    case('stable_inherited_command_fails', child, child, rejected=True)
+    case('stable_empty_command_fails', {**child, 'command': ''}, {**child, 'command': ''}, rejected=True)
+    case('stable_foreign_command_rejected_before_wait', {**child, 'command': 'FOREIGN'}, ready, rejected=True, immediate=True)
+    case('unreadable_command_rejected_before_wait', {**child, 'command': None}, ready, rejected=True, immediate=True)
+    case('foreign_parent_rejected_before_wait', {**child, 'ppid': 999}, ready, rejected=True, immediate=True)
+    case('child_pid_reuse_not_adopted', child, {**ready, 'startTicks': 4}, rejected=True)
+    case('child_reparenting_not_adopted', child, {**ready, 'ppid': 999}, rejected=True)
+    case('backend_pid_reuse_not_adopted', child, ready, parent_after={**parent, 'startTicks': 9}, rejected=True)
+    case('backend_zombie_not_adopted', child, ready, parent_after={**parent, 'state': 'Z'}, rejected=True)
+    case('verified_child_exit_gone_not_adopted', child, None, exited=True)
+    case('verified_child_exit_zombie_not_adopted', child, {**child, 'state': 'Z', 'command': None}, exited=True)
+    case('unreadable_same_live_identity_not_skipped', child, None, child_after=child, rejected=True)
+    case('snapshot_gap_pid_reuse_not_adopted', child, None, child_after={**ready, 'startTicks': 4}, rejected=True)
+    case('expected_command_after_deadline_rejected', child, ready, snapshot_delay=.006, rejected=True)
+    runner = NativeSoak.__new__(NativeSoak)
+    runner.snapshot = lambda pid: {**child, 'state': 'Z', 'command': None}
+    require(runner.register(child['pid'], 'worker') is None, 'Initial zombie was newly owned')
+    checks.append('initial_zombie_never_owned')
+    return {'evidenceClass': 'CONTROLLED_COMMAND_IDENTITY_GUARDS_NOT_NATIVE', 'checks': checks}
+
+
+def owned_fork_exec_self_test():
+    """Real owned children reproduce inherited argv, without a native solver."""
+    cycles = []
+    with tempfile.TemporaryDirectory(prefix='enterprise-native-owned-fork-exec-', dir='/tmp') as directory:
+        worker = Path(directory) / 'controlled_worker.py'
+        worker.write_text('import os,sys\nos.read(int(sys.argv[1]),1)\n')
+        for cycle in range(3):
+            go_read, go_write = os.pipe()
+            life_read, life_write = os.pipe()
+            os.set_inheritable(life_read, True)
+            parent = proc_snapshot(os.getpid())
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    os.close(go_write)
+                    os.close(life_write)
+                    os.read(go_read, 1)
+                    os.close(go_read)
+                    os.execv(sys.executable, [sys.executable, str(worker), str(life_read)])
+                finally:
+                    os._exit(99)
+            os.close(go_read)
+            os.close(life_read)
+            released = False
+            events = []
+            try:
+                before = proc_snapshot(pid)
+                require(before is not None and before['command'] == parent['command'] and before['ppid'] == parent['pid'],
+                        'Owned fork did not expose its inherited backend command')
+                try:
+                    require(str(worker) in before['command'], 'Refusing ownership of an unexpected process command')
+                except AssertionError:
+                    pass
+                else:
+                    raise AssertionError('Original command guard did not reproduce its pre-exec rejection')
+                def release_and_snapshot(candidate):
+                    nonlocal released
+                    if not released:
+                        os.write(go_write, b'x')
+                        released = True
+                    return proc_snapshot(candidate)
+                after = worker_command_snapshot(before, str(worker), parent, snapshot_reader=release_and_snapshot,
+                                                observe=events.append)
+                require(after is not None and same_process(before, after) and after['ppid'] == before['ppid']
+                        and str(worker) in after['command'], 'Owned fork/exec transition lost identity or command verification')
+                cycles.append({'cycle': cycle + 1, 'pid': pid, 'startTicks': before['startTicks'], 'ppid': before['ppid'],
+                               'originalGuardRejectedInheritedCommand': True, 'expectedCommandVerifiedAfterExec': True,
+                               'samePidStartTimeAndParent': True, 'transitionEvents': events})
+            finally:
+                if not released:
+                    try:
+                        os.write(go_write, b'x')
+                    except BrokenPipeError:
+                        pass
+                os.close(go_write)
+                os.close(life_write)
+                deadline = time.monotonic() + 3
+                waited, status = os.waitpid(pid, os.WNOHANG)
+                while not waited and time.monotonic() < deadline:
+                    time.sleep(.005)
+                    waited, status = os.waitpid(pid, os.WNOHANG)
+                if not waited:
+                    # This unreaped child is ours; its PID cannot yet be reused.
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+                    raise AssertionError('Owned fork/exec control did not exit after its private pipe closed')
+                require(os.waitstatus_to_exitcode(status) == 0, 'Owned fork/exec control exited abnormally')
+    return {'evidenceClass': 'OWNED_FORK_EXEC_REPRODUCTION_NOT_NATIVE', 'cycles': cycles, 'allOwnedControlsReaped': True}
+
+
+def failure_progress_self_test():
+    runner = NativeSoak.__new__(NativeSoak)
+    runner.evidence = argparse.Namespace(counts=Counter(cycles=136))
+    runner.active_started = 100.0
+    progress = runner.failure_progress(now=1170.022)
+    require(progress == {'cycles': 136, 'activeSeconds': 1070.022, 'failureActiveSeconds': 1070.022},
+            'Failure summary did not finalize completed cycles and actual active elapsed')
+    runner.active_started = None
+    require(runner.failure_progress(now=1170.022) == {'cycles': 136}, 'Pre-active failure fabricated an active duration')
+    return {'evidenceClass': 'CONTROLLED_FAILURE_PROGRESS_NOT_NATIVE',
+            'checks': ['failure_uses_completed_cycle_counter', 'failure_refreshes_actual_active_elapsed',
+                       'pre_active_failure_has_no_active_elapsed']}
 
 
 def port_probe_self_test():
@@ -1443,7 +1676,11 @@ def self_test():
     proc_checks = proc_observer_self_test()
     workload_checks = workload_profile_self_test()
     resource_checks = resource_sample_self_test()
+    command_checks = worker_command_self_test()
+    fork_checks = owned_fork_exec_self_test()
+    failure_checks = failure_progress_self_test()
     return {'status': 'SELF_TEST_PASS_NOT_NATIVE', 'nativeExecutionVerified': False,
+            'workerCommandChecks': command_checks, 'ownedForkExecChecks': fork_checks, 'failureProgressChecks': failure_checks,
             'workloadProfileChecks': workload_checks, 'resourceSampleChecks': resource_checks,
             'payloadContracts': result, 'controlledRaceChecks': race_checks, 'portProbeChecks': port_checks, 'procObserverChecks': proc_checks, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected', 'disconnect_requires_owned_active_outer_span', 'disconnect_close_inside_span', 'completed_before_close_is_missed']}
 
@@ -1516,7 +1753,8 @@ def main():
             status = 78
     except BaseException as exc:
         evidence.event('run_failed', exception=type(exc).__name__, reason=str(exc))
-        evidence.save(status='FAIL', failure=str(exc), traceback=traceback.format_exc(limit=8))
+        evidence.save(status='FAIL', failure=str(exc), traceback=traceback.format_exc(limit=8),
+                      **(runner.failure_progress() if runner else {}))
         if runner:
             try:
                 runner.cleanup()
