@@ -62,6 +62,8 @@ def distance(a, b):
 
 def port_available(port):
     with socket.socket() as sock:
+        # Match local_trial's bind check: a closed HTTP listener can leave TIME_WAIT.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(('127.0.0.1', port))
         except OSError:
@@ -283,7 +285,7 @@ class Suite:
             'stages': {k: {'status': 'NOT_RUN'} for k in ('DEPENDENCIES', 'LAUNCHER', 'BROWSER', 'IMPORT_MAPPING_UNITS',
                 'MISSING_CRS_GUARD', *[f'{s}:{part}' for s in SCOPES for part in
                 ('SOLVE_VERIFY', 'COMPARISON_MAP_REPORT', 'SAVE_RELOAD', 'EXPORT_REIMPORT')],
-                'STALE_RESULT_GUARD', 'CLEANUP')},
+                'SAME_ID_CONFLICT_RECOVERY', 'CROSS_TAB_EDIT_RECOVERY', 'STALE_RESULT_GUARD', 'CLEANUP')},
             'notCovered': ['WINDOWS_REAL_MACHINE', 'MACOS_EXISTING_LAUNCHERS', 'REAL_OSRM',
                 'PRIVATE_WORKBOOK', 'PRODUCTION_AUTHENTICATION', 'HUMAN_OBSERVATION'],
             'pageErrors': [], 'consoleErrors': [], 'externalBlocked': [], 'nativeRequests': []}
@@ -300,7 +302,7 @@ class Suite:
                                   (ROOT, '<checkout>'), (Path.home(), '<home>')):
             value = value.replace(str(path), replacement).replace(str(path).replace('\\', '\\\\'), replacement)
         value = re.sub(r'/(?:Users|home|workspace|opt|tmp|usr)/[^\s\"\'<>:]+', '<local-path>', value)
-        value = re.sub(r'[A-Za-z]:[\\/][^\s\"\'<>]+', '<local-path>', value)
+        value = re.sub(r'(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s\"\'<>]+', '<local-path>', value)
         return value
 
     def write(self):
@@ -476,6 +478,7 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
         current = wait_state(self.page, lambda s: bool((s.get('snapshot') or {}).get('rows')) and
             (s['snapshot'].get('analysisScope') or 'OUTBOUND_ONLY') == scope)
         action(self.page, 'export-html').wait_for()
+        current = state(self.page)  # Includes the completed post-solve durable save.
         assert len(self.result['nativeRequests']) > before, 'No real optimizer POST observed'
         runs = current['snapshot']['solverRuns']
         assert runs and all(r['engine']['id'] == 'OR_TOOLS_CP_SAT' for r in runs)
@@ -520,8 +523,10 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
     def save_reload(self, scope, current):
         self.begin(f'{scope}:SAVE_RELOAD')
         page = self.page
+        prior_revision = (state(page).get('savedPointer') or {}).get('revision', 0)
         action(page, 'draft-save').click()
-        saved = wait_state(page, lambda s: (s.get('savedPointer') or {}).get('status') == 'COMPLETE')
+        saved = wait_state(page, lambda s: (s.get('savedPointer') or {}).get('status') == 'COMPLETE' and
+                           (s.get('savedPointer') or {}).get('revision', 0) > prior_revision)
         pointer, expected = saved['savedPointer'], current['snapshot']['snapshotHash']
         page.reload(wait_until='load')
         button = page.locator('#loginForm .login-btn')
@@ -537,10 +542,11 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
         assert restored['snapshot']['rows'] == current['snapshot']['rows']
         self.passed(snapshotHash=expected, revision=restored['savedPointer']['revision'], mechanism='PAGE_RELOAD_NATIVE_INDEXEDDB_PUBLIC_REOPEN')
 
-    def download(self, name, filename):
-        control = action(self.page, name)
+    def download(self, name, filename, page=None, control=None):
+        page = page or self.page
+        control = control if control is not None else action(page, name)
         reveal(control)
-        with self.page.expect_download() as pending:
+        with page.expect_download() as pending:
             control.click()
         destination = self.evidence / filename
         pending.value.save_as(str(destination))
@@ -593,6 +599,179 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
             reader.close()
         self.passed(snapshotHash=current['snapshot']['snapshotHash'], newIsolatedContext=True,
                     formats=['html', 'csv', 'json', 'md', 'package.json'], tamperedPackageRejected=True)
+
+    def reopen_public(self, page, pointer_id):
+        if '/design/supply-chain-study' not in page.url:
+            route_to(page, '/design/supply-chain-study')
+        step(page, 0)
+        action(page, 'study-list').click()
+        page.locator(f'[data-supply-action="study-open"][data-supply-id="{pointer_id}"]').click()
+        page.wait_for_function('''() => {
+            const tab = document.querySelector('[data-supply-action="step"][aria-current="step"]');
+            return tab && tab.dataset.supplyId !== '0';
+        }''')
+        return wait_state(page, lambda s: (s.get('savedPointer') or {}).get('id') == pointer_id)
+
+    def public_history(self, page, pointer_id):
+        step(page, 0)
+        action(page, 'study-list').click()
+        button = page.locator(f'[data-supply-action="study-history"][data-supply-id="{pointer_id}"]')
+        button.click()
+        versions = page.locator('.sc-versions [data-supply-action="study-version-open"]')
+        versions.first.wait_for()
+        values = versions.evaluate_all('(es) => es.map(e => e.dataset.supplyId).sort()')
+        button.click()
+        return values
+
+    def conflict_controls(self, page):
+        recovery = page.locator('.sc-recovery-actions')
+        recovery.wait_for(state='visible')
+        recovery.locator('[data-supply-action="save-as-branch"]').wait_for(state='visible')
+        recovery.locator('[data-supply-action="package-export"]').wait_for(state='visible')
+        # Save-as-branch is rendered only for a revision conflict, not generic errors.
+        assert 'REVISION_CONFLICT' in page.locator('.sc-advanced').last.text_content()
+        assert page.locator('.sc-message.is-error').is_visible()
+        return recovery
+
+    def same_id_conflict(self, current):
+        self.begin('SAME_ID_CONFLICT_RECOVERY')
+        page = self.page
+        original = self.reopen_public(page, current['savedPointer']['id'])
+        pointer = original['savedPointer']
+        original_history = self.public_history(page, pointer['id'])
+        package = (self.evidence / 'full_chain.package.json').read_bytes()
+        # Visible study-file import is deliberately used: it keeps the imported
+        # content in the editor so the actual save-conflict recovery UI can be used.
+        control = page.locator('[data-supply-file="study"]')
+        reveal(control)
+        upload(control, 'synthetic-same-id-package.json', package, 'application/json')
+        imported = wait_state(page, lambda s: s.get('savedPointer') is None and
+                              (s.get('snapshot') or {}).get('snapshotHash') == current['snapshot']['snapshotHash'])
+        assert imported['study']['studyId'] == original['study']['studyId']
+        action(page, 'draft-save').click()
+        recovery = self.conflict_controls(page)
+        retained = state(page)
+        assert retained['savedPointer'] is None
+        assert retained['snapshot']['snapshotHash'] == original['snapshot']['snapshotHash']
+        complete_download = json.loads(self.download('package-export', 'same-id-retained-result.package.json',
+            control=recovery.locator('[data-supply-action="package-export"]')))
+        assert complete_download['snapshot']['snapshotHash'] == original['snapshot']['snapshotHash']
+        page.screenshot(path=str(self.evidence / 'same-id-save-conflict.png'), full_page=True)
+        # Preserve a genuine unsaved draft through the same recovery controls.
+        step(page, 1)
+        field(page, 'planName').fill('Synthetic same-ID retained draft')
+        field(page, 'planName').press('Tab')
+        draft = wait_state(page, lambda s: not s.get('snapshot') and
+                           (s.get('scenario') or {}).get('scenarioId') == 'Synthetic same-ID retained draft')
+        action(page, 'draft-save').click()
+        recovery = self.conflict_controls(page)
+        draft_download = json.loads(self.download('package-export', 'same-id-retained-draft.package.json',
+            control=recovery.locator('[data-supply-action="package-export"]')))
+        assert draft_download['schemaVersion'] == 'stct-supply-chain-draft-v1'
+        assert draft_download['scenario'] == draft['scenario']
+        assert draft_download['study']['inputHash'] == original['study']['inputHash']
+        recovery.locator('[data-supply-action="save-as-branch"]').click()
+        branch = wait_state(page, lambda s: s.get('study') and s['study']['studyId'] != original['study']['studyId'] and
+                            (s.get('savedPointer') or {}).get('id') == 'SUPPLY:' + s['study']['studyId'])
+        assert branch['savedPointer']['status'] == 'DRAFT' and branch['snapshot'] is None
+        assert branch['scenario']['scenarioId'] == 'Synthetic same-ID retained draft'
+        assert branch['study']['assumptions']['branchOf'] == {
+            'studyId': original['study']['studyId'], 'inputHash': original['study']['inputHash']}
+        near(sum(r['quantity'] for r in branch['study']['periodDemand']), TOTAL)
+        page.screenshot(path=str(self.evidence / 'same-id-saved-as-branch.png'), full_page=True)
+        reopened = self.reopen_public(page, pointer['id'])
+        assert reopened['savedPointer'] == pointer, 'Branch recovery mutated the original pointer'
+        assert reopened['snapshot'] == original['snapshot'], 'Original complete result changed'
+        assert self.public_history(page, pointer['id']) == original_history
+        self.reopen_public(page, pointer['id'])
+        self.passed(originalPointerId=pointer['id'], originalRevision=pointer['revision'],
+            originalSnapshotHash=original['snapshot']['snapshotHash'], originalHistoryPreserved=True,
+            originalHistoryVersions=len(original_history), retainedCompletePackage=True, retainedDraft=True,
+            branchPointerId=branch['savedPointer']['id'], branchStatus='DRAFT',
+            openExistingRoute='step 0 -> study-list -> study-open', dedicatedOpenExistingConflictButton=False)
+        return branch['savedPointer']['id']
+
+    def cross_tab_conflict(self, original_current, branch_pointer):
+        self.begin('CROSS_TAB_EDIT_RECOVERY')
+        primary, secondary = self.page, self.new_page(self.context)
+        try:
+            first = self.reopen_public(primary, branch_pointer)
+            first_history = self.public_history(primary, branch_pointer)
+            self.reopen_public(primary, branch_pointer)
+            login(secondary, self.base)
+            second = self.reopen_public(secondary, branch_pointer)
+            assert first['savedPointer']['revision'] == second['savedPointer']['revision']
+            revision = first['savedPointer']['revision']
+            initial_hash = first['study']['inputHash']
+            for page in (primary, secondary):
+                step(page, 1)
+            # These are true study-data edits, not controller calls or DOM injection.
+            capacity_a = primary.locator('[data-supply-capacity]').first
+            reveal(capacity_a)
+            capacity_key = capacity_a.get_attribute('data-supply-capacity')
+            capacity_a.fill('111')
+            capacity_a.press('Tab')
+            field(primary, 'planName').fill('Synthetic winning tab')
+            field(primary, 'planName').press('Tab')
+            action(primary, 'draft-save').click()
+            winner = wait_state(primary, lambda s: (s.get('savedPointer') or {}).get('revision', 0) > revision and
+                                ((s.get('savedPointer') or {}).get('scenario') or {}).get('scenarioId') == 'Synthetic winning tab')
+            assert winner['study']['inputHash'] != initial_hash
+            assert state(secondary)['savedPointer']['revision'] == revision
+            capacity_b = secondary.locator(f'[data-supply-capacity="{capacity_key}"]')
+            reveal(capacity_b)
+            capacity_b.fill('222')
+            capacity_b.press('Tab')
+            field(secondary, 'planName').fill('Synthetic stale tab retained')
+            field(secondary, 'planName').press('Tab')
+            action(secondary, 'draft-save').click()
+            recovery = self.conflict_controls(secondary)
+            stale = state(secondary)
+            assert stale['savedPointer']['revision'] == revision
+            assert stale['scenario']['scenarioId'] == 'Synthetic stale tab retained'
+            assert stale['study']['inputHash'] not in (initial_hash, winner['study']['inputHash'])
+            site, period = capacity_key.split('|')
+            def capacity(value):
+                return next(n for n in value['study']['nodes'] if n['nodeId'] == site)['capacityByPeriod'][period]
+            near(capacity(winner), 111)
+            near(capacity(stale), 222)
+            retained = json.loads(self.download('package-export', 'cross-tab-retained-draft.package.json',
+                page=secondary, control=recovery.locator('[data-supply-action="package-export"]')))
+            assert retained['scenario'] == stale['scenario']
+            assert retained['study']['inputHash'] == stale['study']['inputHash']
+            secondary.screenshot(path=str(self.evidence / 'cross-tab-save-conflict.png'), full_page=True)
+            recovery.locator('[data-supply-action="save-as-branch"]').click()
+            branch = wait_state(secondary, lambda s: s.get('study') and s['study']['studyId'] != stale['study']['studyId'] and
+                                (s.get('savedPointer') or {}).get('id') == 'SUPPLY:' + s['study']['studyId'])
+            near(capacity(branch), 222)
+            assert branch['scenario']['scenarioId'] == 'Synthetic stale tab retained'
+            winner_reopened = self.reopen_public(primary, branch_pointer)
+            near(capacity(winner_reopened), 111)
+            assert winner_reopened['savedPointer'] == winner['savedPointer'], 'Stale tab overwrote winner'
+            assert winner_reopened['scenario']['scenarioId'] == 'Synthetic winning tab'
+            history = self.public_history(primary, branch_pointer)
+            assert set(first_history).issubset(history) and initial_hash in history
+            assert winner['study']['inputHash'] in history
+            # Open the older study through its actual visible history control, then
+            # reopen current. Reading a version must not alter the current pointer.
+            action(primary, 'study-list').click()
+            primary.locator(f'[data-supply-action="study-history"][data-supply-id="{branch_pointer}"]').click()
+            primary.locator(f'[data-supply-action="study-version-open"][data-supply-id="{initial_hash}"]').click()
+            historical = wait_state(primary, lambda s: s.get('study') and s['study']['inputHash'] == initial_hash)
+            assert historical['snapshot'] is None
+            winner_again = self.reopen_public(primary, branch_pointer)
+            assert winner_again['savedPointer'] == winner['savedPointer']
+            near(capacity(winner_again), 111)
+            secondary.screenshot(path=str(self.evidence / 'cross-tab-recovered-branch.png'), full_page=True)
+            original = self.reopen_public(primary, original_current['savedPointer']['id'])
+            assert original['snapshot'] == original_current['snapshot']
+            self.passed(sharedBrowserContext=True, independentTabs=2, originalRevision=revision,
+                winnerRevision=winner['savedPointer']['revision'], winningCapacity=111, retainedCapacity=222,
+                staleDraftDownloaded=True, staleBranchPointerId=branch['savedPointer']['id'],
+                winnerPointerPreserved=True, historyVersions=len(history), publicHistoryOpened=True,
+                originalFullChainSnapshotPreserved=True, lateSaveReceiptRace='NOT_RUN_IN_UI_COMPONENT_ONLY')
+        finally:
+            secondary.close()
 
     def stale_guard(self, current):
         self.begin('STALE_RESULT_GUARD')
@@ -668,6 +847,18 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
         self.result['error'] = self.scrub(traceback.format_exc())
         if self.page:
             try:
+                current = state(self.page) or {}
+                self.result['failureDiagnostics'] = {
+                    'status': current.get('status'), 'lastError': current.get('lastError'),
+                    'studyId': (current.get('study') or {}).get('studyId'),
+                    'savedPointer': current.get('savedPointer'),
+                    'snapshotHash': (current.get('snapshot') or {}).get('snapshotHash'),
+                    'messages': self.page.locator('.sc-message, [data-supply-preflight]').all_text_contents(),
+                    'visibleStep': self.page.locator('[data-supply-action="step"][aria-current="step"]').get_attribute('data-supply-id'),
+                    'route': urlsplit(self.page.url).fragment}
+            except Exception:
+                pass
+            try:
                 self.page.screenshot(path=str(self.evidence / 'failure.png'), full_page=True)
             except Exception:
                 pass
@@ -696,6 +887,8 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
                         self.map_report(scope, current)
                         self.save_reload(scope, current)
                         self.export_reimport(scope, current)
+                    branch_pointer = self.same_id_conflict(current)
+                    self.cross_tab_conflict(current, branch_pointer)
                     self.stale_guard(current)
                     assert not self.result['pageErrors'], self.result['pageErrors']
                     self.result['status'] = 'PASS'

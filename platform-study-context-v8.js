@@ -12,7 +12,7 @@
   const SCHEMA_VERSION = "stct-platform-study-context-v8";
   const STUDY_KINDS = Object.freeze(["SUPPLY_CHAIN_PERIOD", "FACILITY", "NETWORK_ORDERS", "OPERATIONS_PLAN"]);
   const IDENTITY_FIELDS = Object.freeze(["studyKind", "studyId", "projectId", "datasetVersion", "scenarioId", "runId", "inputHash", "resultHash", "classification", "backendIdentity"]);
-  const BACKEND_FIELDS = Object.freeze(["endpoint", "instanceId", "startedAt", "buildFingerprint", "protocolVersion", "modelVersion", "runSpecHash", "buildMatch", "capabilities"]);
+  const BACKEND_FIELDS = Object.freeze(["endpoint", "instanceId", "startedAt", "buildFingerprint", "protocolVersion", "modelVersion", "runSpecHash", "buildMatch", "capabilities", "buildPolicy", "expectedBuildFingerprint"]);
 
   function fail(code) { throw Object.assign(new Error(code), { code }); }
   function optionalText(value) {
@@ -36,6 +36,14 @@
           if (!Array.isArray(items) || items.length > 32 || items.some((item) => typeof item !== "string" || !item || item.length > 64)) fail("STUDY_CONTEXT_BACKEND_INVALID");
           result[field] = Object.freeze(items.slice());
         }
+      } else if (field === "buildPolicy") {
+        if (value[field] == null) continue; // Preserve historical context identity shape.
+        if (!["STRICT_PINNED", "COMPATIBLE_WARN"].includes(value[field])) fail("STUDY_CONTEXT_BACKEND_INVALID");
+        result[field] = value[field];
+      } else if (field === "expectedBuildFingerprint") {
+        if (!Object.hasOwn(value, field)) continue;
+        if (value[field] != null && (typeof value[field] !== "string" || !/^[a-f0-9]{64}$/.test(value[field]))) fail("STUDY_CONTEXT_BACKEND_INVALID");
+        result[field] = value[field] ?? null;
       } else result[field] = optionalText(value[field]);
     }
     if (result.endpoint) {

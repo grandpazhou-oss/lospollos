@@ -32,6 +32,12 @@ service replacement, dependency installation on a workstation, or history rewrit
   distance improvement percentage. Frequency data does not convert volume-km into
   vehicle-km. Numerical solver objectives, constraints, units and tolerances are unchanged.
 
+- **Strict-identity UI integration:** the first real UI run completed native solving but
+  failed before showing results: the shared study context rejected the hardening
+  branch's new `buildPolicy` and `expectedBuildFingerprint` fields. The context now
+  admits only these explicitly typed fields; unknown fields and malformed pins stay
+  rejected. Three existing context/bridge/view suites and the full-UI rerun cover it.
+
 ## Reproduction
 
 With the approved existing Python, Node, OR-Tools and browser environment:

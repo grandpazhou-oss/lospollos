@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE_JS = (
     'test_enterprise_storage_races.cjs',
     'test_enterprise_road_report_truthfulness.js',
+    'test_platform_study_context_v8.js', 'test_v8_supply_view_bridge.js', 'test_v8_supply_views.js',
     'test_enterprise_hardening_v1.cjs', 'test_enterprise_hardening.js', 'test_supply_chain_v71_health.js',
     'test_enterprise_snapshot_integrity.js', 'test_v86_roads.js',
     'test_road_client_row_roundtrip_w1.js', 'test_supply_chain_draft_v19.js',
