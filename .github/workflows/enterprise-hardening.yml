@@ -114,7 +114,7 @@ jobs:
     env:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
-      ENTERPRISE_OBSERVATION_PROFILE: ui-wait-mutation-only
+      ENTERPRISE_OBSERVATION_PROFILE: python-allocation-only
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -147,14 +147,16 @@ jobs:
           root = Path(os.environ['RUNNER_TEMP']) / 'enterprise-soak-preflight'
           native = json.loads((root / 'native-scope.json').read_text())
           profile = os.environ['ENTERPRISE_OBSERVATION_PROFILE']
-          assert profile in ('paced-history-recovery', 'wait-path-ab-only', 'ui-wait-mutation-only'), profile
+          assert profile in ('paced-history-recovery', 'wait-path-ab-only', 'ui-wait-mutation-only', 'python-allocation-only'), profile
           if profile != 'paced-history-recovery':
               assert native['nativeLongRequired'] is False, 'Focused browser diagnostics require verified unchanged native source'
           focused = profile != 'paced-history-recovery'
-          omission = 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'NOT_RUN_WAIT_REPAIR_ONLY'
+          omission = {'wait-path-ab-only': 'NOT_RUN_AB_ONLY', 'ui-wait-mutation-only': 'NOT_RUN_WAIT_REPAIR_ONLY',
+                      'python-allocation-only': 'NOT_RUN_ALLOCATION_ONLY'}.get(profile)
           result = {'profile': profile, 'sourceCommit': native['sourceCommit'],
                     'classification': {'wait-path-ab-only': 'WAIT_IMPLEMENTATION_COMPONENT_DIAGNOSTIC_NOT_PRODUCT_ACCEPTANCE',
                                        'ui-wait-mutation-only': 'SINGLE_FIXED_UI_WAIT_REPAIR_MUTATION_WINDOW',
+                                       'python-allocation-only': 'MATCHED_PYTHON_ALLOCATION_OBSERVER_DIAGNOSTIC',
                                        'paced-history-recovery': 'HISTORY_RECOVERY_DIAGNOSTIC'}[profile],
                     'ordinaryCurrentHeadNativeBrowserAndUiChecksRequired': True,
                     'additionalNativePreflights': omission if focused else 'REQUIRED',
@@ -163,7 +165,8 @@ jobs:
                     'pacedHistoryLongWindow': omission if focused else 'REQUIRED',
                     'additionalCommandRepeats': omission if focused else 'REQUIRED',
                     'waitPathComponentAB': 'REQUIRED' if profile == 'wait-path-ab-only' else 'NOT_RUN_NOT_SELECTED',
-                    'uiWaitMutationWindow': 'REQUIRED_ONCE_720S_30_UI_600_IDB' if profile == 'ui-wait-mutation-only' else 'NOT_RUN_NOT_SELECTED'}
+                    'uiWaitMutationWindow': 'REQUIRED_ONCE_720S_30_UI_600_IDB' if profile == 'ui-wait-mutation-only' else 'NOT_RUN_NOT_SELECTED',
+                    'pythonAllocationPair': 'REQUIRED_ONCE_FIXED_FIVE_CYCLE_PREFIX_OFF_ON' if profile == 'python-allocation-only' else 'NOT_RUN_NOT_SELECTED'}
           (root / 'observation-scope.json').write_text(json.dumps(result, indent=2) + '\n')
           print(json.dumps(result))
           PYCODE
@@ -224,6 +227,24 @@ jobs:
         with:
           name: enterprise-wait-repair-mutation-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-wait-repair-mutation
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Python allocation pair bounds and measurement guards (not browser execution)
+        id: allocation_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'python-allocation-only' }}
+        run: python -B -m unittest discover -s tests -p 'test_enterprise_python_allocation*.py' -v
+      - name: One matched off-on Python allocation prefix pair
+        # Each arm: 150s activity abort gate; 240s process deadline plus <=65s cleanup.
+        # Pair: 660s watchdog, with at most 65s final verified-process cleanup.
+        timeout-minutes: 13
+        if: ${{ !cancelled() && steps.allocation_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_python_allocation.py --evidence-dir "$RUNNER_TEMP/enterprise-python-allocation"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'python-allocation-only' }}
+        with:
+          name: enterprise-python-allocation-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-python-allocation
           retention-days: 7
           if-no-files-found: warn
       - name: Native soak harness preflight (not a completed soak)
