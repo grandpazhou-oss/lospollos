@@ -78,6 +78,12 @@ jobs:
       - name: Synthetic DESIGN full UI and independent result review
         if: ${{ !cancelled() }}
         run: python tests/test_enterprise_synthetic_full_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-full-ui"
+      - name: Controlled UI faults and genuine native retries
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_ui_faults.py --evidence-dir "$RUNNER_TEMP/enterprise-ui-faults"
+      - name: COMMAND dispatch, manual edits, apply and cancellation
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_command_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-command-ui"
       - name: Verify checked-out source stayed unchanged
         if: always()
         shell: bash
@@ -92,5 +98,7 @@ jobs:
             ${{ runner.temp }}/enterprise-native
             ${{ runner.temp }}/enterprise-browser
             ${{ runner.temp }}/enterprise-full-ui
+            ${{ runner.temp }}/enterprise-ui-faults
+            ${{ runner.temp }}/enterprise-command-ui
           retention-days: 7
           if-no-files-found: warn
