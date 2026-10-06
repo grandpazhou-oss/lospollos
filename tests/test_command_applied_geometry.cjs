@@ -43,6 +43,19 @@ async function main() {
   const context = Context.createContext();
   await context.ready;
   const {plan} = sourcePlan(context);
+  const kilometers = clone(plan);
+  for (const route of kilometers.routes) {
+    delete route.plannedDistanceMeters;
+    delete route.roadMeters;
+    route.km = 1.25;
+  }
+  const kilometersBytes = JSON.stringify(kilometers);
+  const direct = Context.createContext({appliedPlan: kilometers});
+  await direct.ready;
+  assert.ok(direct.planActual().routes.every(route => route.plannedDistanceMeters === 1250));
+  assert.equal(direct.snapshot().plan.planHash, kilometers.planHash);
+  assert.equal(JSON.stringify(kilometers), kilometersBytes);
+  checks.push('EXPLICIT_KILOMETERS_PROJECT_TO_METERS_WITHOUT_SOURCE_MUTATION');
   const before = clone(context.snapshot());
   const refs = Object.fromEntries(['scenario', 'basePlan', 'workspace', 'executionStore', 'replay',
     'simulationStore', 'ready', 'alertStore', 'recoverySession', 'offlineQueue', 'driver', 'incidents']
@@ -60,6 +73,13 @@ async function main() {
     for (const [key, ref] of Object.entries(refs)) assert.equal(context[key], ref, key);
   }
   checks.push('MISSING_AMBIGUOUS_INVALID_GEOMETRY_REJECTED_WITHOUT_FABRICATION');
+  const missingId = clone(context.basePlan);
+  delete missingId.routes[0].routeId;
+  assert.throws(() => context.adoptAppliedPlan(missingId, {policy: 'RESET_EXECUTION'}),
+    {code: 'APPLIED_ROUTE_ID_REQUIRED'});
+  assert.deepEqual(context.snapshot(), before);
+  for (const [key, ref] of Object.entries(refs)) assert.equal(context[key], ref, key);
+  checks.push('MISSING_CANONICAL_ROUTE_ID_REJECTS_EXPLICITLY_WITHOUT_INVENTING_IDENTITY');
 
   // Trigger an actual downstream execution-seeding error after session creation,
   // rather than only failing geometry preflight before any state is replaced.

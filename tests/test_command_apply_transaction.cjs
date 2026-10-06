@@ -33,6 +33,7 @@ for (const file of ['canonical.js', 'verifier.js', 'planning-v12.js'])
 STCTCanonical.configure(JSON.parse(fs.readFileSync(path.join(root, 'shared/planning-contract-v13.json'))));
 const Adapter = require('../command-workspace-adapter-v19.js');
 const Registry = require('../command-route-mount-registry-v19.js');
+const Integrity = require('../integrity-hash-v151.js');
 
 async function candidate() {
   const date = '2026-10-01';
@@ -91,6 +92,9 @@ async function wait(predicate) {
   await context.ready;
   const emitted = [];
   context.subscribe((_snapshot, event) => emitted.push(event));
+  const beforeRefs = Object.fromEntries(['scenario', 'basePlan', 'workspace', 'executionStore', 'replay',
+    'simulationStore', 'ready', 'alertStore', 'recoverySession', 'offlineQueue', 'driver', 'incidents']
+    .map(key => [key, context[key]]));
   const beforeContext = clone(context.snapshot()), beforeData = clone(currentData), beforePlanning = {
     phase: STCTPlanning.state.phase, beforeApply: clone(STCTPlanning.state.beforeApply),
     appliedPlanId: STCTPlanning.state.appliedPlanId};
@@ -119,6 +123,27 @@ async function wait(predicate) {
       appliedPlanId: STCTPlanning.state.appliedPlanId}, beforePlanning);
   }
   STCTVerifier.verify = verify;
+  const eventsBeforeNotifyFault = emitted.length;
+  const stopThrowing = context.subscribe((_snapshot, event) => {
+    if (event.type === 'VERIFIED_APPLIED_PLAN_ADOPTED') {
+      throw Object.assign(new Error('Controlled adoption notification failure'), {code: 'CONTROLLED_NOTIFY_FAILURE'});
+    }
+  });
+  click();
+  await wait(() => adapter.diagnostics().lastDomainAction?.result?.code === 'CONTROLLED_NOTIFY_FAILURE');
+  assert.equal(writes, 0);
+  assert.deepEqual(currentData, beforeData);
+  assert.deepEqual(context.snapshot(), beforeContext, 'Notification failure must restore authority, revision and transitions');
+  for (const [key, value] of Object.entries(beforeRefs)) assert.equal(context[key], value, key);
+  assert.deepEqual({phase: STCTPlanning.state.phase, beforeApply: STCTPlanning.state.beforeApply,
+    appliedPlanId: STCTPlanning.state.appliedPlanId}, beforePlanning);
+  assert.ok(rootTarget.innerHTML.includes('<dt>PLAN</dt><dd>' + beforeContext.plan.planHash + '</dd>'),
+    'The adapter error render must read the restored old operational plan');
+  // Earlier observers can have seen the transient event before a later observer
+  // throws. Rollback repairs final authority; it cannot retract that observation.
+  assert.equal(emitted.slice(eventsBeforeNotifyFault).filter(event => event.type === 'VERIFIED_APPLIED_PLAN_ADOPTED').length, 1);
+  stopThrowing();
+  const eventsBeforeRetry = emitted.length;
   click();
   await wait(() => adapter.diagnostics().lastDomainAction?.result?.status === 'APPLIED_AND_ADOPTED');
   await context.ready;
@@ -127,8 +152,27 @@ async function wait(predicate) {
   assert.equal(context.snapshot().plan.planHash, plan.planHash);
   assert.equal(context.snapshot().execution.run.planHash, plan.planHash);
   assert.equal(STCTPlanning.state.phase, 'applied');
-  assert.equal(emitted.filter(event => event.type === 'VERIFIED_APPLIED_PLAN_ADOPTED').length, 1);
+  assert.equal(context.snapshot().contextTransitions.length, beforeContext.contextTransitions.length + 1);
+  assert.equal(emitted.slice(eventsBeforeRetry).filter(event => event.type === 'VERIFIED_APPLIED_PLAN_ADOPTED').length, 1);
+  const geometries = new Map(currentData.routeGeoJson.features.map(feature =>
+    [feature.properties.routeId, feature.geometry.coordinates]));
+  const expectedGeometryHash = Integrity.hashValue(currentData.routes.map(route => geometries.get(route.routeId)));
+  assert.equal(context.snapshot().execution.run.routeGeometryHash, expectedGeometryHash);
+  const actual = context.planActual();
+  for (const route of currentData.routes) {
+    const row = actual.routes.find(value => value.routeId === route.routeId);
+    assert.ok(route.roadMeters > 0);
+    assert.equal(row.plannedDistanceMeters, route.roadMeters);
+    assert.deepEqual(row.plannedGhost, geometries.get(route.routeId));
+  }
+  assert.equal((await STCTCanonical.planIdentity(plan.inputHash, context.basePlan)).planHash, plan.planHash,
+    'Operational geometry/distance projection must preserve canonical authority');
+  assert.deepEqual(context.basePlan.metrics, currentData.metrics);
   console.log(JSON.stringify({status: 'PASS', method: 'CONTROLLED_COMPONENT_FAULTS_REAL_VERIFIER_AND_ADAPTER',
     checks: ['GEOMETRY_REJECTION_PRESERVES_BOTH_SIDES', 'DOWNSTREAM_ADOPTION_FAILURE_PRESERVES_BOTH_SIDES',
-      'NO_FALSE_APPLY_RECEIPT', 'RETRY_APPLIES_IDENTICAL_HASH_TO_BOTH_SIDES'], nativeSolverExecuted: false}, null, 2));
+      'NOTIFY_THROW_RESTORES_BOTH_FINAL_AUTHORITIES_AND_RENDER', 'NO_FALSE_APPLY_RECEIPT',
+      'RETRY_APPLIES_IDENTICAL_HASH_TO_BOTH_SIDES', 'EXECUTION_PVA_RETAIN_VERIFIED_GEOMETRY_AND_METERS',
+      'CANONICAL_HASH_AND_SOLVER_METRICS_UNCHANGED'],
+    eventBoundary: 'An earlier listener may observe the transient event; final context/revision/transitions roll back',
+    nativeSolverExecuted: false}, null, 2));
 })().catch(error => {console.error(error.stack); process.exitCode = 1;});

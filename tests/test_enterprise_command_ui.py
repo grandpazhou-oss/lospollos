@@ -69,7 +69,8 @@ def applied_identity(page):
     return page.evaluate('''() => {
       const d=window.STCTCore.getData();
       return {planHash:d.planHash || null, inputHash:d.inputHash || null,
-              routes:d.routes, manualAdjustmentAudit:d.meta?.manualAdjustmentAudit || [],
+              routes:d.routes, routeGeoJson:d.routeGeoJson,
+              manualAdjustmentAudit:d.meta?.manualAdjustmentAudit || [],
               verification:d.verification?.status || null};
     }''')
 
@@ -272,9 +273,38 @@ class CommandSuite(Suite):
         assert plan_hash_in_ribbon(page) == manual_hash
         assert any(a['actionType'] == 'REORDER_STOP' for a in applied['manualAdjustmentAudit'])
         assert len([o for r in applied['routes'] for o in r['orderIds']]) == 6
+        # COMMAND is already mounted. The accessor returns its existing context;
+        # these calls only read snapshots and pure projections, never inject state.
+        operational = page.evaluate('''() => {
+          const context=window.STCTPlatformV19.instance.commandAdapter.createOperationalContext();
+          const data=window.STCTCore.getData(), snapshot=context.snapshot();
+          const geometries=new Map(data.routeGeoJson.features.map(f=>[f.properties.routeId,f.geometry.coordinates]));
+          return {run:snapshot.execution.run, planActual:context.planActual(),
+            expectedGeometryHash:window.STCTV15.integrityHash.hashValue(data.routes.map(r=>geometries.get(r.routeId)))};
+        }''')
+        assert operational['run']['planHash'] == manual_hash
+        assert operational['run']['routeGeometryHash'] == operational['expectedGeometryHash']
+        geometries = {f['properties']['routeId']: f['geometry']['coordinates']
+                      for f in applied['routeGeoJson']['features']}
+        distances = {}
+        for source in applied['routes']:
+            actual = next(r for r in operational['planActual']['routes'] if r['routeId'] == source['routeId'])
+            assert source['roadMeters'] > 0
+            assert actual['plannedDistanceMeters'] == source['roadMeters']
+            assert actual['plannedGhost'] == geometries[source['routeId']]
+            distances[source['routeId']] = actual['plannedDistanceMeters']
         self.shot('manual-plan-applied-to-command')
+        route_to(page, '/command/plan-vs-actual')
+        page.locator('[data-command-route="/command/plan-vs-actual"]').wait_for(state='visible')
+        self.shot('native-manual-plan-vs-actual-projection')
+        route_to(page, '/command/dispatch')
+        page.locator('#optimizerView.command-native-panel').wait_for(state='visible')
+        assert applied_identity(page) == applied
         self.passed(baseHash=base_hash, manualPlanHash=manual_hash, lockedEditRejected=True,
-            exactUndo=True, verifier='PASS', originalDispatchAndOperationalContextBothAdopted=True)
+            exactUndo=True, verifier='PASS', originalDispatchAndOperationalContextBothAdopted=True,
+            executionRouteGeometryHash=operational['run']['routeGeometryHash'],
+            plannedMetersByRoute=distances, plannedGhostPreservesVerifiedGeoJSON=True,
+            distanceBoundary='Copied existing verified model roadMeters; no real OSRM or routing claim')
         return applied
 
     def cancel_batch(self, applied):

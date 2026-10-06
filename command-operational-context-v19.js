@@ -128,6 +128,24 @@
     return value;
   }
 
+  function operationalPlanProjection(appliedPlan, operationalScenario) {
+    // These are derived presentation/execution fields, excluded from the
+    // canonical assignment envelope. Preserve the verified hash and metrics.
+    const projected = clone(appliedPlan);
+    const routes = new Map(operationalScenario.routes.map((route) => [route.routeId, route]));
+    projected.routes = projected.routes.map((route) => {
+      const operationalRoute = routes.get(text(route.routeId));
+      if (!operationalRoute) throw Object.assign(new Error("Applied route requires its canonical routeId"), { code: "APPLIED_ROUTE_ID_REQUIRED" });
+      const value = { ...route, geometry: clone(operationalRoute.geometry) };
+      if (!Number.isFinite(value.plannedDistanceMeters)) {
+        if (Number.isFinite(value.roadMeters)) value.plannedDistanceMeters = value.roadMeters;
+        else if (Number.isFinite(value.km)) value.plannedDistanceMeters = value.km * 1000;
+      }
+      return value;
+    });
+    return projected;
+  }
+
   function recoveryFixture(plan, executionRunHash, executionStateHash) {
     const incidentHash = dependencies.Integrity.hashValue({ source: "P3_SYNTHETIC_EXCEPTION", executionRunHash });
     const context = {
@@ -202,7 +220,7 @@
     const noWebGL = options.noWebGL === true;
     const fixture = { vehicleCount: 8, stopsPerVehicle: 8, positionsPerVehicle: 18, ...(options.fixture || {}) };
     let scenario = options.appliedPlan ? scenarioFromAppliedPlan(options.appliedPlan) : dependencies.FleetReplay.syntheticScenario(fixture);
-    let plan = options.appliedPlan ? clone(options.appliedPlan) : planFromScenario(scenario);
+    let plan = options.appliedPlan ? operationalPlanProjection(options.appliedPlan, scenario) : planFromScenario(scenario);
     let contextSource = options.appliedPlan ? "UPLOADED_APPLIED" : "SYNTHETIC_FALLBACK";
     let transitionEvents = [];
     let alertStore = dependencies.Alerts.createInbox();
@@ -270,13 +288,20 @@
       });
     }
 
+    function captureContext() {
+      return { scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver, revision, transitionEvents: [...transitionEvents] };
+    }
+
+    function restoreContext(previous) {
+      ({ scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver, revision, transitionEvents } = previous);
+    }
+
     function rebuildSession(nextScenario, nextPlan, sourceType) {
-      // All new authorities are local to this synchronous rebuild. If preparation
-      // fails, retain every prior session reference instead of a mixed context.
-      const previous = { scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver };
+      // Retain the previous authorities if synchronous preparation fails.
+      const previous = captureContext();
       try {
         scenario = clone(nextScenario);
-        plan = clone(nextPlan);
+        plan = operationalPlanProjection(nextPlan, scenario);
         contextSource = sourceType;
         alertStore = dependencies.Alerts.createInbox();
         workspace = dependencies.Workspace.createWorkspace({ appliedPlan: plan, alertStore, locale: workspace.snapshot().locale });
@@ -297,7 +322,7 @@
         driver = dependencies.Driver.create({ run, plan, store: executionStore, queue: offlineQueue, inbox: alertStore, vehicleId: scenario.routes[Math.min(2, scenario.routes.length - 1)].vehicleId });
         seedAlerts();
       } catch (error) {
-        ({ scenario, plan, contextSource, alertStore, workspace, executionStore, run, replay, simulationStore, simulationReady, recovery, offlineQueue, incidents, localReviewNotes, selected, driver } = previous);
+        restoreContext(previous);
         throw error;
       }
     }
@@ -311,21 +336,29 @@
       const active = !["COMPLETED", "CANCELLED", "FAILED"].includes(executionStore.snapshot().run.status);
       if (active && policy === "REJECT_WHILE_RUNNING") return { status: "REJECTED", code: "ACTIVE_EXECUTION_PLAN_CHANGE_REJECTED", policy, activePlanHash: plan.planHash };
       if (active && policy === "EXPLICIT_MIGRATION" && transition.migrationApproved !== true) return { status: "REJECTED", code: "EXPLICIT_MIGRATION_APPROVAL_REQUIRED", policy, activePlanHash: plan.planHash };
-      const before = { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash };
-      const nextScenario = scenarioFromAppliedPlan(appliedPlan);
-      rebuildSession(nextScenario, appliedPlan, "UPLOADED_APPLIED");
-      const event = {
-        schemaVersion: "stct-command-context-transition-v1.9-p31",
-        transitionId: `COMMAND-CONTEXT-${String(transitionEvents.length + 1).padStart(4, "0")}`,
-        policy,
-        reason: text(transition.reason || "VERIFIED_PLAN_APPLIED"),
-        before,
-        after: { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash },
-      };
-      event.transitionHash = dependencies.Integrity.hashValue(event);
-      transitionEvents.push(event);
-      notify("VERIFIED_APPLIED_PLAN_ADOPTED", event);
-      return { status: "ADOPTED", sourceType: contextSource, event: clone(event) };
+      const previous = captureContext();
+      try {
+        const before = { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash };
+        const nextScenario = scenarioFromAppliedPlan(appliedPlan);
+        rebuildSession(nextScenario, appliedPlan, "UPLOADED_APPLIED");
+        const event = {
+          schemaVersion: "stct-command-context-transition-v1.9-p31",
+          transitionId: `COMMAND-CONTEXT-${String(transitionEvents.length + 1).padStart(4, "0")}`,
+          policy,
+          reason: text(transition.reason || "VERIFIED_PLAN_APPLIED"),
+          before,
+          after: { scenarioHash: scenario.scenarioHash, planHash: plan.planHash, executionRunHash: run.executionRunHash },
+        };
+        event.transitionHash = dependencies.Integrity.hashValue(event);
+        transitionEvents.push(event);
+        notify("VERIFIED_APPLIED_PLAN_ADOPTED", event);
+        return { status: "ADOPTED", sourceType: contextSource, event: clone(event) };
+      } catch (error) {
+        // An earlier listener may have observed the transient notification. We
+        // restore final authority, revision and lineage, not outside effects.
+        restoreContext(previous);
+        throw error;
+      }
     }
 
     function currentTracks() { return dependencies.FleetTracks.build(scenario.positions); }
