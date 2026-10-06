@@ -40,6 +40,12 @@ service replacement, dependency installation on a workstation, or history rewrit
 
 ## Reproduction
 
+The existing Windows command files had CRLF bytes in Git despite a text/eol=crlf
+checkout rule. They are normalized to LF in the Git index and remain CRLF in the
+checkout, without changing commands. A regression and read-only post-test Git diff
+check prevent inconsistent dirty-checkout evidence. This is not Windows hardware
+acceptance.
+
 With the approved existing Python, Node, OR-Tools and browser environment:
 
 ```sh
