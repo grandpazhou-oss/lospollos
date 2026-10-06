@@ -247,7 +247,17 @@ class BrowserSoakSuite(FaultSuite):
         upload(control, f'synthetic-cycle-{number}.json', text.encode(), 'application/json')
         imported = wait_state(secondary, lambda s: s.get('savedPointer') is None and
             (s.get('study') or {}).get('inputHash') == stale['study']['inputHash'])
-        assert imported['scenario'] == stale['scenario'] and imported.get('snapshot') is None
+        readback = {'cycle': number, 'studyHash': imported['study']['inputHash'],
+            'expectedScenario': packed['scenario'], 'actualScenario': imported.get('scenario'),
+            'expectedStaleResult': packed.get('staleResult'), 'actualStaleResult': imported.get('staleResult'),
+            'savedPointer': imported.get('savedPointer'), 'snapshotAbsent': imported.get('snapshot') is None}
+        self.result['latestDraftRoundtrip'] = readback
+        self.events.emit('draft_roundtrip_readback', **readback)
+        self.write()
+        if imported.get('scenario') != packed['scenario'] or imported.get('staleResult') != packed.get('staleResult'):
+            secondary.screenshot(path=str(self.evidence / 'failure-secondary-import.png'), full_page=True)
+        assert imported['scenario'] == stale['scenario'] and imported.get('snapshot') is None, readback
+        assert imported.get('staleResult') == packed.get('staleResult'), readback
         reopened_branch = self.reopen_public(secondary, branch_pointer['id'])
         assert reopened_branch['savedPointer'] == branch_pointer
         assert reopened_branch['study']['inputHash'] == branch['study']['inputHash']

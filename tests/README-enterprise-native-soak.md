@@ -75,7 +75,15 @@ exit. Observer errors fail the run.
 Profiling imposes uncalibrated Python call/return filtering and locked JSON-line
 append overhead. These timings are not uninstrumented performance/SLA claims.
 Linux /proc is sampled every 0.2 seconds across all owned backend/worker sessions,
-including worker children launched from non-main threads. Aggregate limits are
+including worker children launched from non-main threads. Linux may deny fd access
+briefly during process exit while stat still reports a running task. The observer
+may spend at most 20 ms rechecking the same PID/start-time identity. Only verified
+exit/zombie (or proof the old identity was replaced) ends that sample; stable live
+permission denial is an explicit PROC_OBSERVER failure. Exited state-only records
+retain null metrics, never fabricated zero values. Samples list measured live
+PIDs separately from exited state-only PIDs; only actual live measurements enter
+resource totals. PID/start-time verification for cleanup is independent of fd
+access, so an observation failure still attempts cleanup of verified owned tasks. Aggregate limits are
 RSS 1 GiB, 512 descriptors, 64 threads and one live worker. Cross-thread/process
 native execution must never exceed one. Limits, conservation failures, orphan
 or idle-reclamation timeouts stop the run and clean up only owned processes.

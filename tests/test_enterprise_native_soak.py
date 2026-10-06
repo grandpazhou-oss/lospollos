@@ -73,23 +73,94 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-def proc_snapshot(pid):
-    """Read only; pid/startTicks pairs are the immutable ownership identity."""
+class ProcObserverError(RuntimeError):
+    """Live owned process metrics could not be observed; never assume zero."""
+
+
+def proc_identity(pid):
+    """Identity/state reads do not depend on access to a live process's fds."""
     try:
-        base = Path('/proc') / str(pid)
-        raw = (base / 'stat').read_text()
+        raw = (Path('/proc') / str(pid) / 'stat').read_text()
         fields = raw[raw.rfind(')') + 2:].split()
-        status = {}
-        for line in (base / 'status').read_text().splitlines():
-            key, _, value = line.partition(':')
-            status[key] = value.strip()
-        command = (base / 'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace').strip()
-        return {'pid': pid, 'ppid': int(fields[1]), 'startTicks': int(fields[19]),
-                'state': fields[0], 'command': command,
-                'rssBytes': int(status.get('VmRSS', '0 kB').split()[0]) * 1024,
-                'threads': int(status.get('Threads', '0')), 'fds': len(list((base / 'fd').iterdir()))}
+        return {'pid': pid, 'ppid': int(fields[1]), 'startTicks': int(fields[19]), 'state': fields[0]}
     except (FileNotFoundError, ProcessLookupError):
         return None
+    except PermissionError as exc:
+        raise ProcObserverError(f'PROC_OBSERVER_IDENTITY_DENIED pid={pid}: {exc}') from exc
+
+
+def _proc_resources(pid):
+    base = Path('/proc') / str(pid)
+    status = {}
+    for line in (base / 'status').read_text().splitlines():
+        key, _, value = line.partition(':')
+        status[key] = value.strip()
+    return {'command': (base / 'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace').strip(),
+            'rssBytes': int(status['VmRSS'].split()[0]) * 1024 if 'VmRSS' in status else None,
+            'threads': int(status['Threads']) if 'Threads' in status else None,
+            'fds': len(list((base / 'fd').iterdir()))}
+
+
+def proc_snapshot(pid, *, identity_reader=None, resource_reader=None, observe=None, exit_wait_seconds=.02):
+    """Recheck exit identity after EACCES; persistent live denial is a failure.
+
+    Linux can revoke fd access in do_exit while stat still briefly says R. A
+    bounded 20ms identity-only wait may establish exit. It never returns zero or
+    skips a still-live inaccessible process. Reader injection is for self-tests.
+    """
+    identity_reader = identity_reader or proc_identity
+    resource_reader = resource_reader or _proc_resources
+    before = identity_reader(pid)
+    if before is None:
+        return None
+
+    def state_only(current, reason):
+        value = {**current, 'command': None, 'rssBytes': None, 'threads': None, 'fds': None,
+                 'resourcesReadable': False, 'observation': reason}
+        if observe:
+            observe(value)
+        return value
+
+    def exited_or_reused(current, reason):
+        if current is None or current['startTicks'] != before['startTicks']:
+            if observe:
+                observe({**before, 'resourcesReadable': False,
+                         'observation': reason + ('_GONE' if current is None else '_PID_REUSED'),
+                         'replacementStartTicks': None if current is None else current['startTicks']})
+            return True
+        return False
+
+    if before['state'] == 'Z':
+        return state_only(before, 'EXITED_ZOMBIE_BEFORE_RESOURCE_READ')
+    try:
+        resources = resource_reader(pid)
+    except (FileNotFoundError, ProcessLookupError):
+        current = identity_reader(pid)
+        if exited_or_reused(current, 'RESOURCE_DISAPPEARED'):
+            return None
+        if current['state'] == 'Z':
+            return state_only(current, 'EXITED_ZOMBIE_AFTER_RESOURCE_DISAPPEARED')
+        raise ProcObserverError(f'PROC_OBSERVER_LIVE_RESOURCE_DISAPPEARED pid={pid} startTicks={before["startTicks"]}')
+    except PermissionError as exc:
+        deadline = time.monotonic() + exit_wait_seconds
+        while True:
+            current = identity_reader(pid)
+            if exited_or_reused(current, 'PERMISSION_EXIT_RECHECK'):
+                return None
+            if current['state'] == 'Z':
+                return state_only(current, 'EXITED_ZOMBIE_AFTER_PERMISSION_DENIED')
+            if time.monotonic() >= deadline:
+                raise ProcObserverError(f'PROC_OBSERVER_LIVE_PERMISSION_DENIED pid={pid} '
+                                        f'startTicks={before["startTicks"]} state={current["state"]}: {exc}') from exc
+            time.sleep(.001)
+    current = identity_reader(pid)
+    if exited_or_reused(current, 'RESOURCE_IDENTITY_RECHECK'):
+        return None
+    if current['state'] == 'Z':
+        return state_only(current, 'EXITED_ZOMBIE_DURING_RESOURCE_READ')
+    require(all(resources.get(key) is not None for key in ('rssBytes', 'threads', 'fds')),
+            'PROC_OBSERVER_LIVE_RESOURCE_FIELDS_MISSING')
+    return {**current, **resources, 'resourcesReadable': True}
 
 
 def descendants(pid):
@@ -115,7 +186,7 @@ def descendants(pid):
 
 
 def same_process(identity, current=None):
-    current = current if current is not None else proc_snapshot(identity['pid'])
+    current = current if current is not None else proc_identity(identity['pid'])
     return bool(current and current['startTicks'] == identity['startTicks'])
 
 
@@ -265,6 +336,7 @@ class NativeSoak:
         self.instance = None
         self.generations = []
         self.owned = {}
+        self.proc_observed = set()
         self.owned_lock = threading.RLock()
         self.monitor_stop = threading.Event()
         self.failed = threading.Event()
@@ -313,9 +385,19 @@ class NativeSoak:
         finally:
             connection.close()
 
+    def snapshot(self, pid):
+        def observation(value):
+            key = (value['pid'], value['startTicks'], value['observation'])
+            with self.owned_lock:
+                if key not in self.proc_observed:
+                    self.proc_observed.add(key)
+                    self.evidence.event('proc_exit_observation', **value)
+        return proc_snapshot(pid, observe=observation)
+
     def register(self, pid, role):
-        value = proc_snapshot(pid)
-        if value is None:
+        value = self.snapshot(pid)
+        if value is None or value['state'] == 'Z':
+            # A zombie has no usable cmdline/fds and must never be newly claimed.
             return None
         expected = str(ROOT / 'optimizer' / ('ortools_service.py' if role == 'backend' else 'supply_chain_job_worker_v6.py'))
         require(expected in value['command'], 'Refusing ownership of an unexpected process command')
@@ -400,7 +482,7 @@ class NativeSoak:
                 self.register(pid, 'worker')
         with self.owned_lock:
             return [current for identity in self.owned.values()
-                    if identity['role'] == 'worker' and (current := proc_snapshot(identity['pid']))
+                    if identity['role'] == 'worker' and (current := self.snapshot(identity['pid']))
                     and same_process(identity, current)]
 
     def verify_exit(self, pid):
@@ -437,13 +519,17 @@ class NativeSoak:
                 self.inspect_boundaries()
                 with self.owned_lock:
                     processes = [current for identity in self.owned.values()
-                                 if (current := proc_snapshot(identity['pid'])) and same_process(identity, current)]
+                                 if (current := self.snapshot(identity['pid'])) and same_process(identity, current)]
+                live_processes = [p for p in processes if p['state'] != 'Z']
                 sample = {'elapsedSeconds': round(time.monotonic() - self.evidence.start, 3),
                           'monoNs': time.monotonic_ns(), 'instanceId': self.instance,
-                          'rssBytes': sum(p['rssBytes'] for p in processes),
-                          'fds': sum(p['fds'] for p in processes),
-                          'threads': sum(p['threads'] for p in processes),
+                          'rssBytes': sum(p['rssBytes'] for p in live_processes),
+                          'fds': sum(p['fds'] for p in live_processes),
+                          'threads': sum(p['threads'] for p in live_processes),
                           'workers': sum(p['state'] != 'Z' for p in workers),
+                          'resourceScope': 'MEASURED_LIVE_OWNED_PROCESSES_ONLY',
+                          'measuredLivePids': [p['pid'] for p in live_processes],
+                          'stateOnlyExitedPids': [p['pid'] for p in processes if p['state'] == 'Z'],
                           'pids': [{k: p[k] for k in ('pid', 'ppid', 'startTicks', 'state', 'rssBytes', 'fds', 'threads')}
                                    for p in processes]}
                 self.evidence.sample(sample)
@@ -461,14 +547,14 @@ class NativeSoak:
     def emergency_stop(self):
         try:
             self.capture_workers()
-        except (OSError, AssertionError):
+        except (OSError, AssertionError, ProcObserverError):
             pass
         with self.owned_lock:
             identities = list(self.owned.values())
         for identity in sorted(identities, key=lambda row: row['role'] == 'backend'):
             try:
                 self.signal_owned(identity['pid'], signal.SIGKILL, 'safety_or_final_cleanup')
-            except (OSError, AssertionError):
+            except (OSError, AssertionError, ProcObserverError):
                 pass
         if self.backend:
             try:
@@ -482,8 +568,8 @@ class NativeSoak:
             self.check()
             live = self.capture_workers()
             if not live:
-                current = proc_snapshot(self.backend.pid) if self.backend else None
-                if current and current['threads'] <= 3:
+                current = self.snapshot(self.backend.pid) if self.backend else None
+                if current and current['state'] != 'Z' and current['threads'] <= 3:
                     self.idle_samples.append({'instanceId': self.instance, 'elapsedSeconds': time.monotonic()-self.evidence.start,
                                               **{key: current[key] for key in ('rssBytes', 'fds', 'threads')}})
                     self.evidence.event('idle_recovered', **self.idle_samples[-1])
@@ -927,6 +1013,46 @@ class NativeSoak:
         raise AssertionError('Owned PID remains after final cleanup: ' + str([row['pid'] for row in alive]))
 
 
+def proc_observer_self_test():
+    """Controlled reader races; stable live denials must remain fatal."""
+    before = {'pid': 101, 'ppid': 100, 'startTicks': 7, 'state': 'R'}
+    checked = []
+    def denied(pid):
+        raise PermissionError(errno.EACCES, 'CONTROLLED_FD_DENIAL')
+    for name, after in [('gone', None), ('zombie', {**before, 'state': 'Z'}),
+                        ('pid_reused', {**before, 'startTicks': 8})]:
+        identities = iter([before, after])
+        observations = []
+        value = proc_snapshot(101, identity_reader=lambda pid: next(identities),
+                              resource_reader=denied, observe=observations.append, exit_wait_seconds=0)
+        require(bool(observations), 'Exit/reuse observation was not recorded')
+        if name == 'zombie':
+            require(value['state'] == 'Z' and value['startTicks'] == 7 and not value['resourcesReadable'],
+                    'Zombie permission race lost identity')
+            require(all(value[key] is None for key in ('rssBytes', 'fds', 'threads')),
+                    'Unreadable zombie resources were fabricated as zero')
+        else:
+            require(value is None, 'Gone/reused PID was adopted as the original process')
+        checked.append('permission_then_' + name)
+    identities = iter([before, before, {**before, 'state': 'Z'}])
+    value = proc_snapshot(101, identity_reader=lambda pid: next(identities), resource_reader=denied)
+    require(value['state'] == 'Z', 'Short do_exit R-to-Z transition was not verified')
+    checked.append('brief_exit_transition_requires_verified_zombie')
+    try:
+        proc_snapshot(101, identity_reader=lambda pid: before, resource_reader=denied, exit_wait_seconds=0)
+    except ProcObserverError as exc:
+        require('LIVE_PERMISSION_DENIED' in str(exc), 'Live denial misclassified')
+    else:
+        raise AssertionError('Stable live permission denial was ignored')
+    checked.append('live_denied_fails_without_zero_metrics')
+    resource_calls = []
+    value = proc_snapshot(101, identity_reader=lambda pid: {**before, 'state': 'Z'},
+                          resource_reader=lambda pid: resource_calls.append(pid))
+    require(not resource_calls and value['fds'] is None, 'Zombie attempted fd enumeration')
+    checked.append('known_zombie_skips_resource_reads')
+    return {'evidenceClass': 'CONTROLLED_PROC_READER_NOT_NATIVE', 'checks': checked}
+
+
 def port_probe_self_test():
     """Only owned loopback HTTP/socket controls; no native solver dependency."""
     class ProbeHandler(BaseHTTPRequestHandler):
@@ -1109,8 +1235,9 @@ def self_test():
     require(spans.disconnect_witness(None, 17) is None, 'Unobserved span counted as fault')
     race_checks = controlled_race_self_test()
     port_checks = port_probe_self_test()
+    proc_checks = proc_observer_self_test()
     return {'status': 'SELF_TEST_PASS_NOT_NATIVE', 'nativeExecutionVerified': False,
-            'payloadContracts': result, 'controlledRaceChecks': race_checks, 'portProbeChecks': port_checks, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected', 'disconnect_requires_owned_active_outer_span', 'disconnect_close_inside_span', 'completed_before_close_is_missed']}
+            'payloadContracts': result, 'controlledRaceChecks': race_checks, 'portProbeChecks': port_checks, 'procObserverChecks': proc_checks, 'checks': ['profile_compiles', 'proc_identity', 'pid_reuse_guard', 'protected_ports', 'free_loopback_port', 'nested_span_deduplication', 'verified_abrupt_exit', 'pid_reuse_restart', 'overlap_rejected', 'nonmonotonic_rejected', 'unmatched_exit_rejected', 'disconnect_requires_owned_active_outer_span', 'disconnect_close_inside_span', 'completed_before_close_is_missed']}
 
 
 def main():
