@@ -26,7 +26,7 @@
         req.onupgradeneeded=()=>{for(const store of STORES)if(!req.result.objectStoreNames.contains(store))req.result.createObjectStore(store,{keyPath:'id'});};
         req.onblocked=()=>{rejected=true;reject(error('STORAGE_BLOCKED'));};
         req.onerror=()=>reject(error(req.error?.name==='VersionError'?'STORAGE_NEWER_SCHEMA_READ_ONLY':'STORAGE_UNAVAILABLE',req.error?.name));
-        req.onsuccess=()=>{if(rejected||closed){req.result.close();return;}db=req.result;db.onversionchange=()=>{db.close();db=null;};resolve(db);};
+        req.onsuccess=()=>{if(rejected||closed){req.result.close();if(closed&&!rejected)reject(error('STORAGE_CLOSED'));return;}db=req.result;db.onversionchange=()=>{db.close();db=null;};resolve(db);};
       }).finally(()=>{opening=null;});
       return opening;
     }
