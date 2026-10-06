@@ -13,9 +13,9 @@ Implemented cases:
 - Controlled health build mismatch and missing instance identity: visible rejection, no solve POST
 - Controlled old-instance health identity: real job response disagrees with the announced instance, so it is rejected before result adoption
 - Controlled HTTP 429: actual visible busy error and enabled retry; subsequent unaltered native retry is independently verified
-- Controlled nonterminal HTTP view and held genuine status response: actual cancel control clicked twice, actual cancellation requests reach the native backend, held poll released, UI settles and another unaltered native retry succeeds
+- Controlled nonterminal HTTP view and held genuine status response: actual cancel control clicked twice, actual cancellation requests reach the native backend, visible messages match the actual terminal receipt, held poll released, UI settles and another unaltered native retry succeeds
 - Actual page reload while a job poll is held: visible INTERRUPTED state, session resume marker removed, cancellation requested, no silent solve restart, then unaltered native retry
-- Genuine job-creation response held while the user-visible saved-study controls switch to a different synthetic study: old response released, detached cancellation requested, new study/pointer/results remain unchanged
+- Genuine job-creation response held while the global Scenario Library row Open control switches to a different synthetic study: old response released, detached cancellation requested, new study/pointer/results remain unchanged; a received-response event, absence of request failure, and an under-8-second hold prove this is a live late response rather than a timed-out request
 
 ## Explicit evidence boundaries
 
@@ -23,4 +23,6 @@ Only stages named `NATIVE_RETRY_*` claim an unaltered successful native solve, s
 
 Health does not pin a previously seen instance ID. A valid, nonempty but different instance ID is accepted at health and checked against job responses after submission. Accordingly, the old-instance case intentionally records one solve POST and protocol rejection; it does not claim instance-only pre-POST rejection. Empty instance identity and wrong build are separately proven to reject before submission.
 
-The tiny native fixture may finish before the cancel click. The suite requires real cancel requests, idempotent repeated UI cancellation, terminal backend state and correct UI settling, and reports whether cancellation actually won. A backend COMPLETE/PARTIAL response is never relabeled as native cancellation. Native worker termination guarantees and larger workload cancellation are covered separately; this suite is bounded UI recovery evidence.
+The tiny native fixture may finish before the cancel click. The suite requires real cancel requests, idempotent repeated UI cancellation, terminal backend state and correct UI settling, and reports whether cancellation actually won. A backend COMPLETE/PARTIAL response is never relabeled as native cancellation. CANCELLED/PARTIAL jobs with retained candidates keep their backend status and have every retained ledger independently checked without claiming complete coverage or a global optimum. Native worker termination guarantees and larger workload cancellation are covered separately; this suite is bounded UI recovery evidence.
+
+The in-study saved-list button is intentionally disabled while a run is busy. The in-flight switch case therefore uses the still-available global Scenario Library; it never waits for that disabled button, extends the application timeout, or bypasses its disabled state.

@@ -17,7 +17,7 @@ import time
 from urllib.parse import urlsplit
 
 from test_enterprise_synthetic_full_ui import (
-    ROOT, Suite, action, field, independent_verify, route_to, state, step,
+    ROOT, TOTAL, Suite, action, field, independent_verify, ledger, near, route_to, state, step,
 )
 
 
@@ -45,6 +45,17 @@ class RealResponseGate:
         self.controls = []
         self.cancel_requests = 0
         self.installed = False
+        self.creation_captured_at = None
+        self.creation_failure = None
+        self.creation_response_received = False
+
+    def request_failed(self, request):
+        if request.method == 'POST' and request.url == self.suite.job_base:
+            self.creation_failure = request.failure
+
+    def response_received(self, response):
+        if response.request.method == 'POST' and response.url == self.suite.job_base:
+            self.creation_response_received = True
 
     def create(self, route):
         if route.request.method != 'POST':
@@ -54,6 +65,7 @@ class RealResponseGate:
         body = response.json()
         assert response.ok and body.get('jobId'), body
         self.created = body
+        self.creation_captured_at = time.monotonic()
         self.suite.owned_jobs[body['jobId']] = body
         if self.hold_creation:
             self.pending.append((route, response, body))
@@ -80,6 +92,8 @@ class RealResponseGate:
         route.fallback()
 
     def install(self):
+        self.page.on('requestfailed', self.request_failed)
+        self.page.on('response', self.response_received)
         self.page.route(self.suite.job_base, self.create)
         self.page.route(self.suite.job_base + '/**', self.job)
         self.installed = True
@@ -102,6 +116,8 @@ class RealResponseGate:
             self.page.unroute(self.suite.job_base, self.create)
             self.page.unroute(self.suite.job_base + '/**', self.job)
             self.installed = False
+            self.page.remove_listener('requestfailed', self.request_failed)
+            self.page.remove_listener('response', self.response_received)
         # Navigation normally aborts its pending poll. Abort any remaining route;
         # do not release a stale result during cleanup as if it were a valid solve.
         for route, _, _ in self.pending:
@@ -255,12 +271,23 @@ class FaultSuite(Suite):
             action(self.page, 'cancel-run').wait_for(state='visible')
             assert state(self.page)['job']['jobId'] == created['jobId']
             # Hold the poll while exercising the actual cancel control twice.
+            cancellation_messages = []
             for _ in range(2):
                 before = gate.cancel_requests
                 action(self.page, 'cancel-run').click()
                 wait_ui(self.page, lambda _: gate.cancel_requests > before, 'Cancel request was not sent')
-                wait_ui(self.page, lambda s: (s.get('job') or {}).get('status') in ('CANCELLED', 'COMPLETE', 'PARTIAL'),
+                receipt = wait_ui(self.page, lambda s: (s.get('job') or {}).get('status') in ('CANCELLED', 'COMPLETE', 'PARTIAL'),
                         'Native cancellation did not return a terminal response')
+                terminal = receipt['job']['status']
+                expected_message = {'CANCELLED': '计算已取消', 'COMPLETE': '任务已完成，取消未生效',
+                                    'PARTIAL': '任务已结束并保留部分结果，未确认取消'}[terminal]
+                wait_ui(self.page, lambda _: expected_message in '\n'.join(
+                    self.page.locator('.sc-message:visible').all_text_contents()),
+                    'Visible cancel message did not match the native terminal receipt')
+                messages = self.page.locator('.sc-message:visible').all_text_contents()
+                if terminal != 'CANCELLED':
+                    assert not any('计算已取消；' in message for message in messages)
+                cancellation_messages.append({'nativeStatus': terminal, 'visibleMessages': messages})
             remote = self.remote_job(created['jobId'])
             assert remote['status'] in ('CANCELLED', 'COMPLETE', 'PARTIAL') and remote.get('completedAt')
             self.screenshot('cancel-control-pending-poll')
@@ -268,8 +295,16 @@ class FaultSuite(Suite):
             value = wait_ui(self.page, lambda s: s.get('status') in ('CANCELLED', 'SNAPSHOT_READY'),
                             'Held cancellation did not settle', 30)
             wait_ui(self.page, lambda _: not action(self.page, 'cancel-run').is_visible(), 'Cancel UI remained busy')
-            if remote['status'] == 'CANCELLED':
-                assert value['status'] == 'CANCELLED' and not value.get('snapshot')
+            value = state(self.page)  # Re-read after the pending run continuation settles.
+            assert value['job']['status'] == remote['status']
+            retained_rows = 0
+            if remote['status'] == 'CANCELLED' and not value.get('snapshot'):
+                assert value['status'] == 'CANCELLED'
+            elif remote['status'] in ('CANCELLED', 'PARTIAL'):
+                # Cancellation may retain already-verified subresults. Verify each
+                # ledger without claiming global optimality or completed coverage.
+                assert value['status'] == 'SNAPSHOT_READY'
+                retained_rows = self.verify_retained_candidates(value)
             else:
                 # A tiny real solve can beat the click; report that race honestly.
                 assert value['status'] == 'SNAPSHOT_READY'
@@ -277,10 +312,31 @@ class FaultSuite(Suite):
             self.passed(method='CONTROLLED_NONTERMINAL_HTTP_AND_HELD_POLL_REAL_CANCEL_REQUESTS',
                 cancelClicks=2, cancelPosts=gate.cancel_requests, jobId=created['jobId'],
                 actualBackendStatus=remote['status'], nativeCancellationWon=remote['status'] == 'CANCELLED',
-                finalUiStatus=value['status'], heldResponseReleased=True, nativeSuccessClaim=False)
+                finalUiStatus=value['status'], heldResponseReleased=True, nativeSuccessClaim=False,
+                cancellationMessages=cancellation_messages, retainedVerifiedCandidateCount=retained_rows,
+                globalOracleClaimForPartialResults=False)
         finally:
             gate.remove()
             self.active_gate = None
+
+    def verify_retained_candidates(self, current):
+        rows = current['snapshot']['rows']
+        assert rows, 'A retained partial snapshot needs independently verified candidates'
+        required = {(d['demandId'], d['period']): d for d in current['study']['periodDemand']}
+        for item in rows:
+            row = item['result']
+            values = ledger(row, current['study'])
+            assert not row['inbound']
+            near(values['outbound']['quantity'], TOTAL)
+            assert {(r['demandId'], r['period']) for r in row['outbound']} == set(required)
+            for leg in row['outbound']:
+                assert leg['fromNodeId'] in row['selectedSiteIds']
+                near(leg['quantity'], required[leg['demandId'], leg['period']]['quantity'])
+            assert all(r['status'] == 'PASS' and r['throughput'] <= r['capacity'] for r in row['capacityByPeriod'])
+            assert row['solverEvidence']['engine']['id'] == 'OR_TOOLS_CP_SAT'
+            assert row['solverEvidence']['status'] in ('OPTIMAL', 'FEASIBLE')
+            near(row['solverEvidence']['objectiveValue'], values['outbound']['volumeKm'], .1)
+        return len(rows)
 
     def refresh_interrupted(self):
         self.begin('REFRESH_INTERRUPTED')
@@ -332,11 +388,23 @@ class FaultSuite(Suite):
         try:
             action(self.page, 'analyze').click()
             created = gate.wait_pending()
-            selected = self.reopen_public(self.page, alternate_pointer)
+            # In-study list/open buttons are disabled while the view is busy.
+            # The global catalog remains usable and performs the same bound reopen.
+            route_to(self.page, '/platform/scenarios')
+            row = self.page.locator(f'tr[data-p5-entry="{alternate_pointer}"]')
+            row.locator('[data-p5-action="open"]').click()
+            self.page.locator('[data-design-route="/design/supply-chain-study"]').wait_for()
+            selected = wait_ui(self.page, lambda s: (s.get('savedPointer') or {}).get('id') == alternate_pointer,
+                               'Public catalog did not switch to the alternate study')
+            held_seconds = time.monotonic() - gate.creation_captured_at
+            assert gate.creation_failure is None, 'Held POST aborted before the intended late response: ' + str(gate.creation_failure)
+            assert held_seconds < 8, 'Public switch exceeded the safe window before the real 10-second request deadline'
             selected_identity = (selected['study']['studyId'], selected['study']['inputHash'])
             selected_snapshot = selected.get('snapshot')
             gate.release()
-            wait_ui(self.page, lambda _: gate.cancel_requests > 0, 'Old late response did not request detached cancellation')
+            wait_ui(self.page, lambda _: gate.creation_response_received and gate.cancel_requests > 0,
+                    'Delivered old late response did not request detached cancellation')
+            assert gate.creation_failure is None, gate.creation_failure
             # Drain the original HTTP continuation, then inspect via actual visible UI.
             self.page.wait_for_timeout(300)
             after = state(self.page)
@@ -351,7 +419,10 @@ class FaultSuite(Suite):
             self.passed(method='CONTROLLED_DELAY_OF_GENUINE_JOB_POST_RESPONSE_PUBLIC_STUDY_SWITCH',
                 oldJobId=created['jobId'], newStudyId=after['study']['studyId'],
                 newStudyHash=after['study']['inputHash'], newStudyPreserved=True,
-                oldResultAdopted=False, backendStatus=remote['status'], nativeSuccessClaim=False)
+                oldResultAdopted=False, backendStatus=remote['status'], nativeSuccessClaim=False,
+                publicSwitchRoute='global scenario library -> alternate row Open', heldSeconds=round(held_seconds, 3),
+                lateHttpResponseReceived=gate.creation_response_received, creationRequestFailure=gate.creation_failure,
+                detachedCancellationPosts=gate.cancel_requests)
         finally:
             gate.remove()
             self.active_gate = None
