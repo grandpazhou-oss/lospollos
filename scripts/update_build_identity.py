@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from optimizer.build_identity import MANIFEST, build_manifest
+from optimizer.build_identity import MANIFEST, build_manifest, verified_identity
 
 
 def main():
@@ -18,13 +18,16 @@ def main():
     manifest = build_manifest(ROOT)
     text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
     config_path = ROOT / "config.js"
+    path = ROOT / MANIFEST
+    if config_path.is_symlink() or path.is_symlink():
+        raise SystemExit("BUILD_IDENTITY_SYMLINK_INVALID")
     config = config_path.read_text(encoding="utf-8")
     pattern = r"expectedOptimizerBuildFingerprint:'[a-f0-9]{64}'"
     if len(re.findall(pattern, config)) != 1:
         raise SystemExit("BUILD_FRONTEND_PIN_INVALID")
     updated = re.sub(pattern, "expectedOptimizerBuildFingerprint:'" + manifest["fingerprint"] + "'", config)
-    path = ROOT / MANIFEST
     if args.check:
+        verified_identity(ROOT)
         if not path.is_file() or path.read_text(encoding="utf-8") != text or config != updated:
             raise SystemExit("BUILD_IDENTITY_STALE")
         print("PASS runtime manifest and frontend pin")

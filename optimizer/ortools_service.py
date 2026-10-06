@@ -1106,17 +1106,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, body: dict[str, Any]) -> None:
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        origin = self.headers.get("Origin")
-        if origin and self._local_origin():
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            origin = self.headers.get("Origin")
+            if origin and self._local_origin():
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+        except (ConnectionError, TimeoutError):
+            # A disconnected client cannot receive a replacement error response.
+            # Let the caller's computation/lease finalizer finish normally.
+            self.close_connection = True
 
     def do_OPTIONS(self) -> None:
         if not self._local_origin():
