@@ -16,6 +16,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_JS = (
+    'test_enterprise_storage_races.cjs',
+    'test_enterprise_road_report_truthfulness.js',
     'test_enterprise_hardening_v1.cjs', 'test_enterprise_hardening.js', 'test_supply_chain_v71_health.js',
     'test_enterprise_snapshot_integrity.js', 'test_v86_roads.js',
     'test_road_client_row_roundtrip_w1.js', 'test_supply_chain_draft_v19.js',
@@ -27,7 +29,7 @@ CORE_JS = (
 )
 NATIVE_JS = (
     'test_supply_chain_v6_boundaries.js', 'test_supply_chain_v7_contracts.js',
-    'test_v86_cost_contract.js', 'test_v82_quantity.js',
+    'test_v86_cost_contract.js', 'test_v82_quantity.js', 'test_rolling_reoptimization_v16.js',
 )
 NATIVE_PY = (
     'test_supply_chain_v7_jobs.py', 'test_optimizer_v13.py',
@@ -48,6 +50,10 @@ def main() -> int:
     rows = []
     env = {**os.environ, 'PYTHONUTF8': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
 
+    def not_run(name, command, reason):
+        rows.append({'name': name, 'status': 'NOT_RUN', 'reason': reason, 'command': command})
+        print(f'NOT_RUN: {name} ({reason})', flush=True)
+
     def run(name, command, timeout=240, dependency=False):
         start = time.monotonic()
         try:
@@ -59,7 +65,7 @@ def main() -> int:
         except OSError as exc:
             code, text = 127, f'BLOCKED_ENVIRONMENT: {type(exc).__name__}\n'
         (output / (name + '.log')).write_text(text, encoding='utf-8')
-        status = 'PASS' if code == 0 else 'BLOCKED_ENVIRONMENT' if dependency or code == 127 else 'FAIL'
+        status = 'PASS' if code == 0 else 'BLOCKED_ENVIRONMENT' if dependency or code in (78, 127) else 'FAIL'
         row = {'name': name, 'status': status, 'exitCode': code,
                'elapsedSeconds': round(time.monotonic() - start, 3), 'command': command}
         rows.append(row)
@@ -72,7 +78,8 @@ def main() -> int:
         run('build-identity', [sys.executable, 'scripts/update_build_identity.py', '--check'])
         for name in CORE_JS:
             run(name, ['node', 'tests/' + name])
-        for name in ('test_backend_build_fingerprint.py', 'test_enterprise_admission.py'):
+        for name in ('test_backend_build_fingerprint.py', 'test_enterprise_admission.py',
+                     'test_enterprise_solver_lifecycle.py', 'test_enterprise_check_reporting.py'):
             run(name, [sys.executable, 'tests/' + name])
     if args.mode in ('native', 'all'):
         ready = run('ortools-dependency', [sys.executable, '-c',
@@ -82,14 +89,37 @@ def main() -> int:
                 run(name, ['node', 'tests/' + name])
             for name in NATIVE_PY:
                 run(name, [sys.executable, 'tests/' + name], timeout=300)
+        else:
+            for name in NATIVE_JS:
+                not_run(name, ['node', 'tests/' + name], 'ORTOOLS_DEPENDENCY_UNAVAILABLE')
+            for name in NATIVE_PY:
+                not_run(name, [sys.executable, 'tests/' + name], 'ORTOOLS_DEPENDENCY_UNAVAILABLE')
     if args.mode in ('browser', 'all'):
         ready = run('playwright-dependency', [sys.executable, '-c',
                     'from playwright.sync_api import sync_playwright; print("playwright import ready; browser launch checked separately")'], dependency=True)
         if ready:
+            ready = run('chromium-launch', [sys.executable, '-c',
+                'import os,shutil; from playwright.sync_api import sync_playwright; '
+                'p=sync_playwright().start(); executable=os.environ.get("STCT_CHROMIUM") or shutil.which("chromium"); '
+                'b=p.chromium.launch(headless=True,**({"executable_path":executable} if executable else {}),args=["--no-sandbox"]); '
+                'print(b.version); b.close(); p.stop()'], dependency=True)
+        if ready:
             run('native-indexeddb', [sys.executable, 'tests/test_enterprise_indexeddb.py'])
-    status = 'PASS' if rows and all(row['status'] == 'PASS' for row in rows) else 'FAIL'
+            run('native-storage-faults', [sys.executable, 'tests/test_enterprise_storage_native.py'])
+        else:
+            not_run('native-indexeddb', [sys.executable, 'tests/test_enterprise_indexeddb.py'], 'BROWSER_DEPENDENCY_UNAVAILABLE')
+            not_run('native-storage-faults', [sys.executable, 'tests/test_enterprise_storage_native.py'], 'BROWSER_DEPENDENCY_UNAVAILABLE')
+    status = ('FAIL' if not rows or any(row['status'] == 'FAIL' for row in rows) else
+              'BLOCKED_ENVIRONMENT' if any(row['status'] == 'BLOCKED_ENVIRONMENT' for row in rows) else
+              'NOT_RUN' if any(row['status'] == 'NOT_RUN' for row in rows) else 'PASS')
+    try:
+        source_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        source_dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
+    except (OSError, subprocess.CalledProcessError):
+        source_commit, source_dirty = None, None
     summary = {'schemaVersion': 'stct-enterprise-checks-v1', 'mode': args.mode, 'status': status,
-               'sourceCommit': os.environ.get('GITHUB_SHA'),
+               'sourceCommit': source_commit, 'sourceDirty': source_dirty,
+               'ciEventCommit': os.environ.get('GITHUB_SHA'),
                'scope': 'EXPLICIT_SYNTHETIC_SELECTION_NOT_FULL_HISTORICAL_SUITE', 'tests': rows,
                'notCovered': ['physical Windows machine', 'real OSRM network', 'private business workbooks',
                               'full UI end-to-end', 'multi-user security', 'soak']}

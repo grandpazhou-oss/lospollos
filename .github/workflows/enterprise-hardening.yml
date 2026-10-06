@@ -1,9 +1,9 @@
 name: Enterprise hardening checks
 on:
   push:
-    branches: [codex/enterprise-hardening-20261006, codex/windows-handoff-map-showcase-20261005]
+    branches: [codex/enterprise-hardening-20261006, codex/enterprise-validation-20261006, codex/windows-handoff-map-showcase-20261005]
   pull_request:
-    branches: [main, codex/windows-handoff-map-showcase-20261005]
+    branches: [main, codex/enterprise-hardening-20261006, codex/windows-handoff-map-showcase-20261005]
 permissions:
   contents: read
 concurrency:
@@ -65,9 +65,13 @@ jobs:
       - name: CI browser
         run: python -m playwright install --with-deps chromium
       - name: Native IndexedDB across two pages
+        if: ${{ !cancelled() }}
         env:
           STCT_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/enterprise-browser
         run: python scripts/run_enterprise_checks.py --mode browser --output "$RUNNER_TEMP/enterprise-browser"
+      - name: Synthetic DESIGN full UI and independent result review
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_synthetic_full_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-full-ui"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -75,5 +79,6 @@ jobs:
           path: |
             ${{ runner.temp }}/enterprise-native
             ${{ runner.temp }}/enterprise-browser
+            ${{ runner.temp }}/enterprise-full-ui
           retention-days: 7
           if-no-files-found: warn
