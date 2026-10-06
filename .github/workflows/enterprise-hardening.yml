@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           git status --short
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
           git diff --exit-code HEAD --
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -89,6 +90,7 @@ jobs:
         shell: bash
         run: |
           git status --short
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
           git diff --exit-code HEAD --
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -102,3 +104,84 @@ jobs:
             ${{ runner.temp }}/enterprise-command-ui
           retention-days: 7
           if-no-files-found: warn
+  stress-soak:
+    name: Sustained native and browser load
+    # Run once for an explicit validation-branch push, not again on its PR event.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/enterprise-validation-20261006'
+    needs: [core, native-browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Existing approved dependencies on ephemeral hosted runner
+        run: python -m pip install 'ortools==9.15.6755' 'playwright==1.57.0'
+      - name: Verify runtime identity before sustained load
+        run: python scripts/update_build_identity.py --check
+      - name: Existing approved Chromium on ephemeral runner
+        run: python -m playwright install --with-deps chromium
+      - name: Native soak harness preflight (not a completed soak)
+        id: native_smoke
+        run: python tests/test_enterprise_native_soak.py --duration-seconds 90 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/native"
+      - name: Browser soak harness preflight (not a completed soak)
+        id: browser_smoke
+        if: ${{ !cancelled() }}
+        run: python tests/test_enterprise_browser_soak.py --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-soak-preflight/browser"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-soak-preflight
+          path: ${{ runner.temp }}/enterprise-soak-preflight
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Thirty-minute real native progressive load and lifecycle soak
+        if: ${{ !cancelled() && steps.native_smoke.outcome == 'success' }}
+        run: python tests/test_enterprise_native_soak.py --duration-seconds 1800 --evidence-dir "$RUNNER_TEMP/enterprise-native-soak"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-native-soak
+          path: ${{ runner.temp }}/enterprise-native-soak
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Twelve-minute isolated UI and native IndexedDB soak
+        if: ${{ !cancelled() && steps.browser_smoke.outcome == 'success' }}
+        run: python tests/test_enterprise_browser_soak.py --duration-seconds 720 --evidence-dir "$RUNNER_TEMP/enterprise-browser-soak"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-browser-soak
+          path: ${{ runner.temp }}/enterprise-browser-soak
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Three independent COMMAND UI repetition cycles
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          for cycle in 1 2 3; do
+            python tests/test_enterprise_command_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-command-repeat/cycle-$cycle"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: enterprise-command-repeat
+          path: ${{ runner.temp }}/enterprise-command-repeat
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Verify stress checks did not rewrite source
+        if: always()
+        shell: bash
+        run: |
+          git status --short
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git diff --exit-code HEAD --
