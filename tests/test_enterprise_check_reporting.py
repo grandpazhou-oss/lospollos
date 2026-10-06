@@ -35,6 +35,7 @@ class ReportingTests(unittest.TestCase):
         self.assertTrue(all(t['status']=='NOT_RUN' for t in summary['tests'][1:]))
         self.assertEqual(summary['sourceCommit'], 'a'*40)
         self.assertTrue(summary['sourceDirty'])
+        self.assertEqual(summary['sourceChanges'], [' M intentional-test.js'])
 
     def test_browser_launch_failure_does_not_claim_storage_ran(self):
         def run(command, **kw):

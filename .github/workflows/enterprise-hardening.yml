@@ -34,6 +34,12 @@ jobs:
       - name: Core contracts, build pin, storage and admission regression
         shell: bash
         run: python scripts/run_enterprise_checks.py --mode core --output "$RUNNER_TEMP/enterprise-core"
+      - name: Verify checked-out source stayed unchanged
+        if: always()
+        shell: bash
+        run: |
+          git status --short
+          git diff --exit-code HEAD --
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -72,6 +78,12 @@ jobs:
       - name: Synthetic DESIGN full UI and independent result review
         if: ${{ !cancelled() }}
         run: python tests/test_enterprise_synthetic_full_ui.py --evidence-dir "$RUNNER_TEMP/enterprise-full-ui"
+      - name: Verify checked-out source stayed unchanged
+        if: always()
+        shell: bash
+        run: |
+          git status --short
+          git diff --exit-code HEAD --
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

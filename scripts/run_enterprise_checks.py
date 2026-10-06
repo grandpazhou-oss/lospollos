@@ -115,11 +115,13 @@ def main() -> int:
               'NOT_RUN' if any(row['status'] == 'NOT_RUN' for row in rows) else 'PASS')
     try:
         source_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-        source_dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
+        source_changes = subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).splitlines()
+        source_dirty = bool(source_changes)
     except (OSError, subprocess.CalledProcessError):
-        source_commit, source_dirty = None, None
+        source_commit, source_dirty, source_changes = None, None, None
     summary = {'schemaVersion': 'stct-enterprise-checks-v1', 'mode': args.mode, 'status': status,
                'sourceCommit': source_commit, 'sourceDirty': source_dirty,
+               'sourceChanges': source_changes,
                'ciEventCommit': os.environ.get('GITHUB_SHA'),
                'scope': 'EXPLICIT_SYNTHETIC_SELECTION_NOT_FULL_HISTORICAL_SUITE', 'tests': rows,
                'notCovered': ['physical Windows machine', 'real OSRM network', 'private business workbooks',
