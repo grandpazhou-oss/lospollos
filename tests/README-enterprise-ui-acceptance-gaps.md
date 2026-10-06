@@ -127,3 +127,11 @@ Ordinary DESIGN/COMMAND suites remain separate evidence. These two cases do not
 establish physical Windows/macOS, private workbook, real OSRM, authentication,
 human visual approval, long-soak qualification or resolution of the inconclusive
 memory comparison.
+
+The shared resource sampler reuses the existing native observer's at-most-20ms
+identity-only check after resource access errors. Only verified gone/reused/zombie
+identities produce separately recorded state-only observations with null metrics;
+persistent live denial or unreadable identity still fails. Resource totals include
+readable live owned identities only, and replacement PID generations are excluded.
+This does not retrospectively establish that the cbca137 failure was an exit race: its
+instantaneous process state was not captured. That failed evidence stays unchanged.

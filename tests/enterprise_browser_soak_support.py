@@ -9,6 +9,7 @@ import statistics
 import subprocess
 import threading
 import time
+from test_enterprise_native_soak import proc_snapshot
 
 
 def source_identity(root):
@@ -89,33 +90,42 @@ class ResourceMonitor:
             self.root_kinds[pid] = kind
 
     def sample(self):
-        table, rows = process_table(), []
+        table, rows, state_only = process_table(), [], []
         with self.lock:
             roots = dict(self.roots)
             kinds = dict(self.root_kinds)
         service_ids = descendant_ids(table, {pid:ticks for pid,ticks in roots.items() if kinds.get(pid) == 'services_workers'})
         for pid in sorted(descendant_ids(table, roots)):
-            directory = Path('/proc') / str(pid)
-            try:
-                status = dict(line.split(':', 1) for line in (directory / 'status').read_text().splitlines()
-                              if ':' in line)
-                rss = int(status.get('VmRSS', '0 kB').split()[0]) * 1024
-                fds = len(list((directory / 'fd').iterdir()))
-                name = table[pid]['name'].lower()
-                command = (directory / 'cmdline').read_bytes()
-                kind = ('chrome' if 'chrom' in name else 'services_workers' if pid in service_ids else
-                        'driver' if b'playwright' in command else 'harness')
-                rows.append({'pid': pid, 'parentPID': table[pid]['ppid'], 'startTicks': table[pid]['startTicks'],
-                    'kind': kind,
-                    'rssBytes': rss, 'fds': fds, 'threads': int(status.get('Threads', '0'))})
-            except FileNotFoundError:
+            expected = table[pid]
+            observations = []
+            # Reuse the already-tested bounded (20ms) identity-only exit check.
+            # Persistent live denial and unreadable identity still raise.
+            measured = proc_snapshot(pid, observe=observations.append)
+            if measured is None and not observations:
+                observations.append({**expected, 'observation': 'GONE_BEFORE_RESOURCE_READ'})
+            if measured is not None and measured['startTicks'] != expected['startTicks']:
+                observations.append({**expected, 'observation': 'DESCENDANT_PID_REUSED',
+                                     'replacementStartTicks': measured['startTicks']})
+                measured = None
+            for observation in observations:
+                entry = {**observation, 'expectedStartTicks': expected['startTicks'],
+                         'resourcesReadable': False, 'rssBytes': None, 'fds': None, 'threads': None}
+                state_only.append(entry)
+                self.log.emit('resource_state_only', **entry)
+            if measured is None or not measured['resourcesReadable']:
                 continue
+            name = expected['name'].lower()
+            kind = ('chrome' if 'chrom' in name else 'services_workers' if pid in service_ids else
+                    'driver' if 'playwright' in measured['command'] else 'harness')
+            rows.append({'pid': pid, 'parentPID': measured['ppid'], 'startTicks': measured['startTicks'],
+                         'kind': kind, **{key: measured[key] for key in ('rssBytes', 'fds', 'threads')}})
         if not rows:
             raise RuntimeError('Resource sample contains no owned process')
         value = {'rssBytes': sum(r['rssBytes'] for r in rows), 'fds': sum(r['fds'] for r in rows),
                  'threads': sum(r['threads'] for r in rows), 'processes': len(rows),
                  'browserRSSBytes': sum(r['rssBytes'] for r in rows if r['kind'] == 'chrome'),
-                 'byProcess': rows}
+                 'byProcess': rows, 'stateOnlyProcesses': state_only,
+                 'measurementScope': 'READABLE_LIVE_OWNED_IDENTITIES_EXIT_STATES_HAVE_NO_RESOURCE_VALUES'}
         value['byKind'] = {}
         for kind in ('chrome', 'services_workers', 'driver', 'harness'):
             subset = [row for row in rows if row['kind'] == kind]

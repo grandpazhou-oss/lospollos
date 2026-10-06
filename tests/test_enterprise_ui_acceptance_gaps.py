@@ -660,6 +660,56 @@ console.log('Pure snapshot-worker import preserves real repository exports PASS'
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_resource_exit_races_require_identity_evidence(self):
+        from unittest.mock import patch
+        import enterprise_browser_soak_support as support
+        from test_enterprise_native_soak import proc_snapshot, ProcObserverError
+        root = {'pid': 1, 'ppid': 0, 'startTicks': 10, 'state': 'S', 'name': 'python'}
+        child = {'pid': 2, 'ppid': 1, 'startTicks': 20, 'state': 'R', 'name': 'worker'}
+        resources = {'command': 'python', 'rssBytes': 20, 'fds': 2, 'threads': 1}
+        class Log:
+            def emit(self, kind, **fields):
+                return {'kind': kind, 'elapsedSeconds': 0, **fields}
+        def sample(identities, denied=False):
+            def read(pid, observe):
+                if pid == 1:
+                    return {**root, **resources, 'rssBytes': 10, 'resourcesReadable': True}
+                def identity(_pid):
+                    value = next(identities)
+                    if isinstance(value, Exception):
+                        raise value
+                    return value
+                def resource(_pid):
+                    if denied:
+                        raise PermissionError('controlled live fd denial')
+                    return resources
+                return proc_snapshot(pid, identity_reader=identity, resource_reader=resource,
+                                     observe=observe, exit_wait_seconds=0)
+            monitor = support.ResourceMonitor(Log())
+            monitor.roots = {1: 10}
+            with patch.object(support, 'process_table', return_value={1: root, 2: child}), \
+                 patch.object(support, 'proc_snapshot', side_effect=read):
+                return monitor.sample()
+        live = sample(iter([child, child]))
+        self.assertEqual(live['rssBytes'], 30)
+        self.assertEqual(len(live['byProcess']), 2)
+        for after in (None, {**child, 'startTicks': 21}, {**child, 'state': 'Z'}):
+            value = sample(iter([child, after]), denied=True)
+            self.assertEqual(value['rssBytes'], 10)
+            self.assertEqual(len(value['byProcess']), 1)
+            self.assertTrue(value['stateOnlyProcesses'])
+            for observation in value['stateOnlyProcesses']:
+                self.assertIsNone(observation['rssBytes'])
+                self.assertIsNone(observation['fds'])
+                self.assertIsNone(observation['threads'])
+        reused = sample(iter([{**child, 'startTicks': 21}, {**child, 'startTicks': 21}]))
+        self.assertEqual(reused['rssBytes'], 10)
+        self.assertEqual(reused['stateOnlyProcesses'][0]['observation'], 'DESCENDANT_PID_REUSED')
+        with self.assertRaises(ProcObserverError):
+            sample(iter([child, child]), denied=True)
+        with self.assertRaises(PermissionError):
+            sample(iter([PermissionError('controlled identity denial')]))
+
     def test_backend_restart_pure_guards(self):
         from enterprise_backend_restart_case import backend_restart_guard_checks
         checks = backend_restart_guard_checks()
