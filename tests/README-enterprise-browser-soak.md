@@ -116,6 +116,82 @@ These are actual native transaction aborts with **controlled fault injection**, 
 real disk exhaustion, browser-quota discovery, customer-scale payloads or UI fault
 coverage. Final hard assertions require all configured cycles and minimum coverage.
 
+## Selected visible-wait repair and fixed verification
+
+The pinned Playwright 1.57 A/B component control at source `a1bd7af` established
+that `Locator.wait_for(state='visible')` retained one ElementHandle per completed
+wait while public `expect(locator).to_be_visible(...)` did not. Its 10 qualification
+cases covered visible, opacity-zero, hidden, zero-size and missing elements. Its
+matched detached-root evidence was sufficient after 30.099 seconds of natural
+observation. This establishes a specific automation retention mechanism; it does
+not attribute all application DOM counts or aggregate RSS to that mechanism.
+
+Only the browser soak's selected UI waits opt into the adapter. The shared
+`reveal`, `download`, `public_history` and `conflict_controls` helpers accept an
+explicit optional `visible_wait` callback. Their default path remains unchanged,
+including consumers in the full-UI, fault, initialization and native-retry suites.
+The reload wait is changed only in `BrowserSoakSuite.cycle_ui`. No hidden/detached
+wait, product code, vendor code or global Playwright method is replaced.
+
+The selected nine **dynamic calls per cycle** map to six **static wait sites**:
+
+| Static wait site | Dynamic selected calls per UI cycle |
+| --- | ---: |
+| `reveal`: primary capacity, secondary capacity, package export, package import | 4 |
+| `conflict_controls`: recovery container, branch button, package button | 3 |
+| `public_history`: first version | 1 |
+| `cycle_ui`: design route after reload | 1 |
+
+Every selected call explicitly uses 25,000 ms. Only the public visibility
+assertion's `AssertionError` becomes public Playwright `TimeoutError`, preserving
+the original assertion as `__cause__`; other API errors propagate unchanged.
+This preserves the selected visible condition and public timeout class, not exact
+polling behavior, error text, elapsed timeout duration or equivalence of all wait
+types. Existing shared consumers keep their original exception behavior.
+
+Before the operating clock and resource baseline, the existing component page
+runs five adapter cases in a small temporary DOM host, then removes that host.
+Visible and opacity-zero cases use the main 25,000 ms parameter. Hidden, zero-size
+and missing negative cases explicitly use 150 ms and must produce the adapted
+timeout with its assertion cause. No page is added and no application data is
+written. The qualification must add zero ElementHandles. It is not another A/B
+retention window and does not count toward the selected UI waits.
+
+The existing smoke and full CLI commands also enforce these new checks:
+
+- `selectedVisibleWaits` records exactly nine successful labeled waits per
+  completed cycle, hence 270 for 30 cycles. Failed waits are not counted
+- Every `cycle_ui` has read-only protocol snapshots before its first UI operation
+  and after its original business assertions. Each `ui_wait_retention` JSONL
+  receipt must show zero ElementHandle growth on all three pages. The summary
+  retains only the latest receipt and the count of successfully checked cycles
+- Each unchanged native round is independently observed before/after and must
+  add five primary-page ElementHandles. The initial round precedes the baseline;
+  six periodic rounds contribute 30 in the full window
+- `selectedWaitRetentionValidation` requires final baseline-relative growth of
+  exactly 30 primary-page handles and zero secondary/component-page handles for
+  the full profile; it does **not** require total ElementHandles to be zero
+- Protocol counts use read-only parent chains to the same three verified Page
+  GUIDs. Unknown handle ownership, changed identity, missing coverage or count
+  drift fails instead of being treated as zero. Per-minute CDP/RSS measurements
+  and all existing save/draft/history/native/resource/cleanup checks remain
+
+The approved hosted verification is one short smoke followed by one fixed
+720-second mutation window with 30 UI cycles, 600 native-IDB component cycles,
+native retry every five UI cycles, three pages and the explicit `hosted-2gib`
+budget. Qualification, coverage, handle attribution, budget or cleanup failure
+ends that verification as a failure; the limits are not adjusted and an identical
+long window is not automatically repeated. Compare the resulting page DOM/heap
+and process-group RSS with the prior 720-second runs, while keeping timing and
+extra-probe differences visible. The prior fast-seed 2 GiB failure remains a
+separate, unresolved observation and is not retested by this paced mutation run.
+
+Pure guards, without launching a browser or native service:
+
+```sh
+python -B -m unittest discover -s tests -p test_enterprise_visible_wait.py -v
+```
+
 ## Resource budget and interpretation
 
 Linux `/proc` is required. Once per second, the suite samples its supervisor and

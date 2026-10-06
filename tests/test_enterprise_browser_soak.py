@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from functools import partial
 import json
 import math
 import os
@@ -41,6 +42,9 @@ DIAGNOSTIC_PROFILES = {
                                'phaseBudgetSeconds': 1470, 'wallCapSeconds': 1500},
 }
 WORKLOAD_PROFILES = ('mutation-soak', *DIAGNOSTIC_PROFILES)
+VISIBLE_WAIT_TIMEOUT_MS = 25000
+SELECTED_WAITS_PER_CYCLE = {'capacity_primary': 1, 'capacity_secondary': 1, 'conflict_controls': 3,
+                          'package_export': 1, 'package_import': 1, 'history': 1, 'reload': 1}
 PRIOR_1GIB_EVIDENCE = {
     'checkout': 'bd9c019', 'artifact': 'enterprise-soak-preflight/browser/resources.jsonl',
     'archiveReference': 'ci-bd9c019/preflight/browser', 'elapsedSeconds': 2.196,
@@ -61,6 +65,35 @@ def finalize_diagnostic_qualification(summary):
         'BLOCKED_ENVIRONMENT': 'BLOCKED_ENVIRONMENT',
         'FAIL': 'FAIL', 'RUNNING': 'RUNNING',
     }.get(summary.get('status'), 'NOT_RUN')
+
+
+def expect_visible_without_handles(locator, *, timeout_ms=VISIBLE_WAIT_TIMEOUT_MS):
+    """Only the visibility assertion's AssertionError adapts to the prior public timeout type."""
+    from playwright.sync_api import expect, TimeoutError as PlaywrightTimeoutError
+    try:
+        expect(locator).to_be_visible(timeout=timeout_ms)
+    except AssertionError as error:
+        raise PlaywrightTimeoutError('Selected visibility wait exceeded ' + str(timeout_ms) + 'ms: ' + str(error)) from error
+
+
+def element_handle_delta(before, after):
+    """Require verified, unchanged page ownership before treating absent handles as zero."""
+    names = {'primary', 'secondary', 'component'}
+    for snapshot in (before, after):
+        assert set(snapshot['byPage']) == names, 'WAIT_PROTOCOL_PAGE_SET_MISMATCH'
+        assert not snapshot['unassignedByType'].get('ElementHandle'), 'WAIT_HANDLE_OWNER_UNKNOWN'
+        assert sum(page['byType'].get('ElementHandle', 0) for page in snapshot['byPage'].values()) == \
+            snapshot['byType'].get('ElementHandle', 0), 'WAIT_HANDLE_ATTRIBUTION_INCOMPLETE'
+    assert all(before['byPage'][name]['pageGUID'] == after['byPage'][name]['pageGUID']
+               for name in names), 'WAIT_PROTOCOL_PAGE_IDENTITY_CHANGED'
+    return {name: after['byPage'][name]['byType'].get('ElementHandle', 0) -
+                  before['byPage'][name]['byType'].get('ElementHandle', 0) for name in sorted(names)}
+
+
+def check_selected_wait_coverage(counts, ui_cycles):
+    assert set(counts) == {str(number) for number in range(1, ui_cycles + 1)}, 'SELECTED_WAIT_CYCLE_SET_MISMATCH'
+    assert all(value == SELECTED_WAITS_PER_CYCLE for value in counts.values()), 'SELECTED_WAIT_CYCLE_COVERAGE_MISMATCH'
+    return sum(sum(value.values()) for value in counts.values())
 
 
 class BrowserSoakSuite(FaultSuite):
@@ -91,6 +124,9 @@ class BrowserSoakSuite(FaultSuite):
         self.phase_started = None
         self.phase_activity_buckets = {}
         self.diagnostic_pages = None
+        self.selected_wait_counts = {}
+        self.native_wait_records = []
+        self.wait_protocol_baseline = None
         self.result.update(suite='ENTERPRISE_BROWSER_STORAGE_SOAK', source=source_identity(ROOT),
             workloadProfile=args.workload_profile,
             method='BOUNDED_PUBLIC_UI_SOAK_PLUS_SEPARATE_NATIVE_INDEXEDDB_COMPONENT',
@@ -113,7 +149,7 @@ class BrowserSoakSuite(FaultSuite):
                       'componentFullHistoryProbes': 0},
             stages={name: {'status': 'NOT_RUN'} for name in (
                 'DEPENDENCIES', 'LAUNCHER', 'BROWSER', 'IMPORT_MAPPING_UNITS', 'MISSING_CRS_GUARD',
-                'COMPONENT_SETUP', 'INITIAL_NATIVE_RETRY', 'HANDLE_LIFETIME_CONTROL', 'IDLE_BASELINE', 'UI_SOAK', 'COMPONENT_SOAK',
+                'COMPONENT_SETUP', 'INITIAL_NATIVE_RETRY', 'SELECTED_WAIT_ADAPTER_QUALIFICATION', 'HANDLE_LIFETIME_CONTROL', 'IDLE_BASELINE', 'UI_SOAK', 'COMPONENT_SOAK',
                 'CONTROLLED_429_BUSY', 'PERIODIC_NATIVE_RETRY', 'FINAL_INVARIANTS', 'CLEANUP')},
             notCovered=['COMMAND_MANUAL_APPLY_CANCEL_NOT_REPEATED_THIS_SUITE', 'REAL_DISK_QUOTA_EXHAUSTION',
                 'REAL_OSRM', 'PRIVATE_DATA', 'WINDOWS_OR_MACOS_REAL_MACHINE', 'BROWSER_PROCESS_RESTART',
@@ -142,6 +178,15 @@ class BrowserSoakSuite(FaultSuite):
 
     def write(self):
         finalize_diagnostic_qualification(self.result)
+        if hasattr(self, 'selected_wait_counts'):
+            self.result['selectedVisibleWaits'] = {'mainTimeoutMs': VISIBLE_WAIT_TIMEOUT_MS,
+                'expectedPerCycle': dict(SELECTED_WAITS_PER_CYCLE), 'successfulByCycle': self.selected_wait_counts,
+                'successfulTotal': sum(sum(counts.values()) for counts in self.selected_wait_counts.values()),
+                'expectedTotal': 9 * self.args.ui_cycles, 'failedWaitsAreNotCounted': True,
+                'sharedDefaultPathChanged': False}
+            self.result['unchangedNativeVisibleWaits'] = {'expectedElementHandlesPerRound': 5,
+                'rounds': self.native_wait_records,
+                'expectedPeriodicContribution': 5 * (self.args.ui_cycles // self.args.native_every)}
         if hasattr(self, 'activity_seconds'):
             self.result['soakWindowStarted'] = self.soak_started is not None
             self.result['activityTiming'] = {
@@ -241,7 +286,9 @@ class BrowserSoakSuite(FaultSuite):
     def edit_capacity(self, page, value, name):
         step(page, 1)
         control = page.locator('[data-supply-capacity]').first
-        reveal(control)
+        assert page is self.page or page is self.secondary, 'SELECTED_WAIT_UNKNOWN_CAPACITY_PAGE'
+        label = 'capacity_primary' if page is self.page else 'capacity_secondary'
+        reveal(control, visible_wait=partial(self.selected_visible_wait, label=label))
         key = control.get_attribute('data-supply-capacity')
         control.fill(str(value))
         control.press('Tab')
@@ -255,6 +302,7 @@ class BrowserSoakSuite(FaultSuite):
 
     def cycle_ui(self, number):
         self.begin('UI_SOAK')
+        wait_protocol_before = self.protocol_object_counts()
         start = time.monotonic()
         primary, secondary = self.page, self.secondary
         before = self.reopen_public(primary, self.master_id)
@@ -273,13 +321,15 @@ class BrowserSoakSuite(FaultSuite):
         stale = self.edit_capacity(secondary, 210 + number, f'Synthetic retained cycle {number}')
         assert stale['savedPointer'] == old_pointer
         action(secondary, 'draft-save').click()
-        recovery = self.conflict_controls(secondary)
+        recovery = self.conflict_controls(secondary,
+            visible_wait=partial(self.selected_visible_wait, label='conflict_controls'))
         rejected = state(secondary)
         assert rejected['savedPointer'] == old_pointer, 'Stale UI reported a false successful save'
         assert rejected['study']['inputHash'] == stale['study']['inputHash']
         assert rejected['scenario'] == stale['scenario']
         text = self.download('package-export', f'cycle-{number:03d}-retained.package.json', page=secondary,
-                             control=recovery.locator('[data-supply-action="package-export"]'))
+                             control=recovery.locator('[data-supply-action="package-export"]'),
+                             visible_wait=partial(self.selected_visible_wait, label='package_export'))
         packed = json.loads(text)
         assert packed['schemaVersion'] == 'stct-supply-chain-draft-v1'
         assert packed['study']['inputHash'] == stale['study']['inputHash'] and packed['scenario'] == stale['scenario']
@@ -297,7 +347,7 @@ class BrowserSoakSuite(FaultSuite):
         # It is intentionally an unsaved same-ID draft, never adopted as saved.
         step(secondary, 0)
         control = secondary.locator('[data-supply-file="study"]')
-        reveal(control)
+        reveal(control, visible_wait=partial(self.selected_visible_wait, label='package_import'))
         upload(control, f'synthetic-cycle-{number}.json', text.encode(), 'application/json')
         imported = wait_state(secondary, lambda s: s.get('savedPointer') is None and
             (s.get('study') or {}).get('inputHash') == stale['study']['inputHash'])
@@ -316,7 +366,8 @@ class BrowserSoakSuite(FaultSuite):
         assert reopened_branch['savedPointer'] == branch_pointer
         assert reopened_branch['study']['inputHash'] == branch['study']['inputHash']
         assert reopened_branch['scenario'] == stale['scenario']
-        history = self.public_history(primary, self.master_id)
+        history = self.public_history(primary, self.master_id,
+            visible_wait=partial(self.selected_visible_wait, label='history'))
         assert old_hash in history and winner['study']['inputHash'] in history
         restored = self.reopen_public(primary, self.master_id)
         assert restored['savedPointer'] == winner['savedPointer'], 'Conflict/branch/import overwrote original'
@@ -324,12 +375,16 @@ class BrowserSoakSuite(FaultSuite):
         button = primary.locator('#loginForm .login-btn')
         if button.is_visible():
             button.click()
-        primary.locator('[data-design-route="/design/supply-chain-study"]').wait_for()
+        self.selected_visible_wait(primary.locator('[data-design-route="/design/supply-chain-study"]'), label='reload')
         restored = self.reopen_public(primary, self.master_id)
         assert restored['savedPointer'] == winner['savedPointer']
         assert restored['study']['inputHash'] == winner['study']['inputHash']
         assert restored['scenario'] == winner['scenario']
         assert restored.get('snapshot') is None
+        assert self.selected_wait_counts.get(str(number)) == SELECTED_WAITS_PER_CYCLE, 'SELECTED_WAIT_CYCLE_COVERAGE_MISMATCH'
+        self.validate_ui_wait_retention(number, wait_protocol_before)
+        self.events.emit('selected_visible_wait_cycle_pass', cycle=number,
+            successfulByKind=self.selected_wait_counts[str(number)], successfulCount=9)
         self.result['coverage']['uiCycles'] += 1
         for key in ('uiSaves', 'uiCrossTabConflicts', 'uiBranchSaves', 'uiPackageExports',
                     'uiPackageReimports', 'uiReloadReopens', 'uiHistoryChecks'):
@@ -340,6 +395,31 @@ class BrowserSoakSuite(FaultSuite):
                     revision=winner['savedPointer']['revision'], studyHash=winner['study']['inputHash'],
                     branchId=branch_pointer['id'], branchRevision=branch_pointer['revision'],
                     historyVersions=len(history), originalPreserved=True, importedDraftUnsaved=True)
+
+    def validate_ui_wait_retention(self, number, before):
+        after = self.protocol_object_counts()
+        delta = element_handle_delta(before, after)
+        expected = {'primary': 0, 'secondary': 0, 'component': 0}
+        ordered = number == self.result.get('uiWaitRetentionCheckedCycles', 0) + 1
+        receipt = {'cycle': number, 'status': 'PASS' if delta == expected and ordered else 'FAIL',
+                   'before': before, 'after': after, 'elementHandleDeltaByPage': delta,
+                   'expectedDeltaByPage': expected, 'successfulSelectedWaits': 9, 'cycleOrderMatched': ordered}
+        # Snapshots contain only serialized counts/identities. Keep one receipt
+        # in memory; the bounded per-cycle history is written directly to JSONL.
+        self.result['latestUiWaitRetention'] = receipt
+        self.events.emit('ui_wait_retention', **receipt)
+        assert delta == expected, 'UI_CYCLE_WAIT_HANDLE_DELTA_MISMATCH'
+        assert ordered, 'UI_WAIT_RETENTION_CYCLE_ORDER_MISMATCH'
+        self.result['uiWaitRetentionCheckedCycles'] = number
+
+    def selected_visible_wait(self, locator, *, label):
+        assert self.current_cycle > 0 and self.stage == 'UI_SOAK', 'SELECTED_WAIT_OUTSIDE_UI_CYCLE'
+        assert label in SELECTED_WAITS_PER_CYCLE, 'SELECTED_WAIT_UNKNOWN_LABEL'
+        self.guard()
+        expect_visible_without_handles(locator, timeout_ms=VISIBLE_WAIT_TIMEOUT_MS)
+        self.guard()
+        counts = self.selected_wait_counts.setdefault(str(self.current_cycle), {})
+        counts[label] = counts.get(label, 0) + 1
 
     def measured(self, kind, operation):
         start = time.monotonic()
@@ -363,10 +443,85 @@ class BrowserSoakSuite(FaultSuite):
         # Read-only diagnostic of this installed Playwright version. These are
         # protocol-object counts, not Python heap bytes or application objects.
         connection = self.page._impl_obj._connection
-        counts = Counter(value._type for value in connection._objects.values())
+        pages = {'primary': self.page, 'secondary': self.secondary, 'component': self.component}
+        guids = {page._impl_obj._guid: name for name, page in pages.items()}
+        assert len(guids) == 3 and all(connection._objects.get(page._impl_obj._guid) is page._impl_obj
+                                      for page in pages.values()), 'WAIT_PROTOCOL_PAGE_IDENTITY_UNVERIFIED'
+        counts = Counter()
+        by_page = {name: Counter() for name in pages}
+        unassigned = Counter()
+        for value in connection._objects.values():
+            counts[value._type] += 1
+            current, owner = value, None
+            for _ in range(16):
+                if current is None:
+                    break
+                if current._guid in guids:
+                    owner = guids[current._guid]
+                    break
+                current = current._parent
+            if value._type in ('ElementHandle', 'JSHandle'):
+                assert owner is not None, 'WAIT_PROTOCOL_PAGE_ATTRIBUTION_FAILED:' + value._type
+            (by_page[owner] if owner else unassigned)[value._type] += 1
         return {'total': sum(counts.values()), 'byType': dict(sorted(counts.items())),
                 'pendingCallbacks': len(connection._callbacks),
-                'method': 'READ_ONLY_PLAYWRIGHT_PRIVATE_PROTOCOL_REGISTRY'}
+                'byPage': {name: {'pageGUID': pages[name]._impl_obj._guid, 'byType': dict(sorted(values.items()))}
+                           for name, values in by_page.items()},
+                'unassignedByType': dict(sorted(unassigned.items())),
+                'method': 'READ_ONLY_PLAYWRIGHT_PROTOCOL_REGISTRY_PARENT_CHAIN_NO_MUTATION'}
+
+    def qualify_selected_visible_wait(self):
+        """Five bounded adapter cases on the existing component page, before the soak clock."""
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        self.begin('SELECTED_WAIT_ADAPTER_QUALIFICATION')
+        before = self.protocol_object_counts()
+        records = []
+        selector = '#enterprise-selected-wait-qualification'
+        assert self.component.locator(selector).count() == 0, 'WAIT_QUALIFICATION_HOST_ALREADY_EXISTS'
+        try:
+            for kind in ('visible', 'opacity_zero', 'hidden', 'zero_size', 'missing'):
+                self.guard()
+                self.component.evaluate('''({selector, kind}) => {
+                    document.querySelector(selector)?.remove();
+                    const host = document.createElement('div'); host.id = selector.slice(1);
+                    host.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647';
+                    if (kind !== 'missing') {
+                        const node = document.createElement('div'); node.dataset.waitTarget = 'true';
+                        node.style.cssText = 'display:block;width:20px;height:20px';
+                        if (kind === 'opacity_zero') node.style.opacity = '0';
+                        if (kind === 'hidden') node.style.visibility = 'hidden';
+                        if (kind === 'zero_size') { node.style.width = '0'; node.style.height = '0'; }
+                        host.append(node);
+                    }
+                    document.body.append(host);
+                }''', {'selector': selector, 'kind': kind})
+                positive = kind in ('visible', 'opacity_zero')
+                timeout = VISIBLE_WAIT_TIMEOUT_MS if positive else 150
+                record = {'case': kind, 'timeoutMs': timeout, 'mainArmTimeout': positive,
+                          'errorClass': None, 'causeClass': None}
+                try:
+                    expect_visible_without_handles(self.component.locator(selector + ' [data-wait-target]'),
+                                                   timeout_ms=timeout)
+                except PlaywrightTimeoutError as error:
+                    assert not positive, 'VISIBLE_ADAPTER_POSITIVE_CASE_TIMED_OUT:' + kind
+                    assert isinstance(error.__cause__, AssertionError), 'VISIBLE_ADAPTER_TIMEOUT_CAUSE_MISSING'
+                    record.update(errorClass=type(error).__module__ + '.' + type(error).__name__,
+                                  causeClass=type(error.__cause__).__module__ + '.' + type(error.__cause__).__name__)
+                else:
+                    assert positive, 'VISIBLE_ADAPTER_NEGATIVE_CASE_SUCCEEDED:' + kind
+                records.append(record)
+        finally:
+            self.component.evaluate('(selector) => document.querySelector(selector)?.remove()', selector)
+        after = self.protocol_object_counts()
+        assert element_handle_delta(before, after) == {'primary': 0, 'secondary': 0, 'component': 0}, \
+            'VISIBLE_ADAPTER_QUALIFICATION_RETAINED_ELEMENT_HANDLE'
+        self.result['selectedVisibleWaitQualification'] = {'status': 'PASS', 'cases': records,
+            'before': before, 'after': after, 'mainTimeoutMs': VISIBLE_WAIT_TIMEOUT_MS,
+            'negativeTimeoutMs': 150, 'negativeTimeoutIsMainWaitTimeout': False,
+            'componentPageOnly': True, 'applicationDataWritten': False, 'selectedCycleCountsIncluded': False,
+            'existingABQualification': {'sourceCommit': 'a1bd7afcc88b92fa6a501cd809191c2eb0ea8cfc',
+                                      'cases': 10, 'scope': 'VISIBLE_CONDITION_ONLY_NOT_ALL_WAIT_TYPES'}}
+        self.passed(**self.result['selectedVisibleWaitQualification'])
 
     def handle_lifetime_control(self):
         self.begin('HANDLE_LIFETIME_CONTROL')
@@ -463,6 +618,7 @@ class BrowserSoakSuite(FaultSuite):
         self.passed(batchCycles=count, totalComponentCycles=self.result['coverage']['componentCycles'])
 
     def native_round(self, initial=False):
+        before = self.protocol_object_counts()
         self.busy()
         self.result['coverage']['controlledBusyRejections'] += 1
         current = self.native_retry('INITIAL_NATIVE_RETRY' if initial else 'PERIODIC_NATIVE_RETRY')
@@ -471,6 +627,15 @@ class BrowserSoakSuite(FaultSuite):
             snapshotHash=current['snapshot']['snapshotHash'],
             pointerRevision=current['savedPointer']['revision'], uiCycle=self.current_cycle,
             method='UNALTERED_NATIVE_RESPONSE_WITH_INDEPENDENT_HAVERSINE_ORACLE')
+        after = self.protocol_object_counts()
+        delta = element_handle_delta(before, after)
+        record = {'initialBeforeBaseline': initial, 'uiCycle': self.current_cycle,
+                  'before': before, 'after': after, 'elementHandleDeltaByPage': delta,
+                  'expectedDeltaByPage': {'primary': 5, 'secondary': 0, 'component': 0},
+                  'waitImplementationChanged': False}
+        self.native_wait_records.append(record)
+        self.events.emit('unchanged_native_visible_waits', **record)
+        assert delta == record['expectedDeltaByPage'], 'UNCHANGED_NATIVE_WAIT_HANDLE_DELTA_MISMATCH'
         return current
 
     def storage_observation(self):
@@ -514,6 +679,8 @@ class BrowserSoakSuite(FaultSuite):
         self.result['idleResourceBaseline'] = baseline
         self.result['resourceBaseline'] = last
         self.baseline_elapsed = last['elapsedSeconds']
+        self.wait_protocol_baseline = self.protocol_object_counts()
+        self.result['selectedWaitProtocolBaseline'] = self.wait_protocol_baseline
         self.memory_observation('idle_baseline_end')
         self.passed(**baseline)
 
@@ -538,6 +705,7 @@ class BrowserSoakSuite(FaultSuite):
     def final_invariants(self):
         self.begin('FINAL_INVARIANTS')
         coverage = self.checked_seed_coverage()
+        self.validate_selected_wait_retention()
         expected_errors = [message for message in self.result['consoleErrors']
                            if re.search(r'(?:status of 429|429 \(Too Many Requests\))', message)]
         unexpected = [message for message in self.result['consoleErrors'] if message not in expected_errors]
@@ -580,6 +748,31 @@ class BrowserSoakSuite(FaultSuite):
         self.page.screenshot(path=str(self.evidence / 'final-ui.png'), full_page=True)
         self.passed(coverage=coverage, observedSeconds=round(elapsed, 3), soakQualified=qualified and not self.args.smoke,
                     componentAndPublicUiEvidenceSeparate=True, evidenceOfNoLeak='NOT_CLAIMED_FROM_FINITE_WINDOW')
+
+    def validate_selected_wait_retention(self):
+        selected = check_selected_wait_coverage(self.selected_wait_counts, self.args.ui_cycles)
+        assert self.result.get('uiWaitRetentionCheckedCycles') == self.args.ui_cycles, 'UI_WAIT_RETENTION_COVERAGE_MISMATCH'
+        periodic = [record for record in self.native_wait_records if not record['initialBeforeBaseline']]
+        assert len([record for record in self.native_wait_records if record['initialBeforeBaseline']]) == 1, \
+            'INITIAL_NATIVE_WAIT_RECORD_MISSING'
+        assert [record['uiCycle'] for record in periodic] == \
+            list(range(self.args.native_every, self.args.ui_cycles + 1, self.args.native_every)), \
+            'PERIODIC_NATIVE_WAIT_RECORD_MISMATCH'
+        expected = {'primary': 5 * len(periodic), 'secondary': 0, 'component': 0}
+        assert all(record['elementHandleDeltaByPage'] == {'primary': 5, 'secondary': 0, 'component': 0}
+                   for record in self.native_wait_records), 'NATIVE_WAIT_CONTRIBUTION_MISMATCH'
+        final = self.protocol_object_counts()
+        delta = element_handle_delta(self.wait_protocol_baseline, final)
+        record = {'status': 'PASS' if delta == expected else 'FAIL',
+                  'successfulSelectedWaits': selected, 'expectedSelectedWaits': 9 * self.args.ui_cycles,
+                  'periodicNativeRounds': len(periodic), 'baseline': self.wait_protocol_baseline,
+                  'final': final, 'elementHandleDeltaByPage': delta, 'expectedDeltaByPage': expected,
+                  'unchangedNativeExpectedContribution': 5 * len(periodic),
+                  'interpretation': 'The gate compares final handle growth with the independently observed unchanged native waits. '
+                                    'Passing does not attribute all DOM or RSS growth or prove absence of a product leak.'}
+        self.result['selectedWaitRetentionValidation'] = record
+        self.events.emit('selected_wait_retention_validation', **record)
+        assert delta == expected, 'SELECTED_WAIT_FINAL_HANDLE_DELTA_MISMATCH'
 
     def run_mutation_cycles(self, duration):
         for number in range(1, self.args.ui_cycles + 1):
@@ -779,6 +972,7 @@ class BrowserSoakSuite(FaultSuite):
                     login(self.secondary, self.base)
                     self.reopen_public(self.secondary, self.master_id)
                     self.result['storageBaseline'] = self.storage_observation()
+                    self.qualify_selected_visible_wait()
                     self.handle_lifetime_control()
                     self.idle_baseline()
                     self.page.screenshot(path=str(self.evidence / 'baseline-ui.png'), full_page=True)

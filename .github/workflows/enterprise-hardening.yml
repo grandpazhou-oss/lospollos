@@ -114,7 +114,7 @@ jobs:
     env:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
-      ENTERPRISE_OBSERVATION_PROFILE: wait-path-ab-only
+      ENTERPRISE_OBSERVATION_PROFILE: ui-wait-mutation-only
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -147,16 +147,23 @@ jobs:
           root = Path(os.environ['RUNNER_TEMP']) / 'enterprise-soak-preflight'
           native = json.loads((root / 'native-scope.json').read_text())
           profile = os.environ['ENTERPRISE_OBSERVATION_PROFILE']
-          assert profile in ('paced-history-recovery', 'wait-path-ab-only'), profile
-          if profile == 'wait-path-ab-only':
-              assert native['nativeLongRequired'] is False, 'AB-only requires verified unchanged native source'
+          assert profile in ('paced-history-recovery', 'wait-path-ab-only', 'ui-wait-mutation-only'), profile
+          if profile != 'paced-history-recovery':
+              assert native['nativeLongRequired'] is False, 'Focused browser diagnostics require verified unchanged native source'
+          focused = profile != 'paced-history-recovery'
+          omission = 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'NOT_RUN_WAIT_REPAIR_ONLY'
           result = {'profile': profile, 'sourceCommit': native['sourceCommit'],
-                    'classification': 'WAIT_IMPLEMENTATION_COMPONENT_DIAGNOSTIC_NOT_PRODUCT_ACCEPTANCE' if profile == 'wait-path-ab-only' else 'HISTORY_RECOVERY_DIAGNOSTIC',
+                    'classification': {'wait-path-ab-only': 'WAIT_IMPLEMENTATION_COMPONENT_DIAGNOSTIC_NOT_PRODUCT_ACCEPTANCE',
+                                       'ui-wait-mutation-only': 'SINGLE_FIXED_UI_WAIT_REPAIR_MUTATION_WINDOW',
+                                       'paced-history-recovery': 'HISTORY_RECOVERY_DIAGNOSTIC'}[profile],
                     'ordinaryCurrentHeadNativeBrowserAndUiChecksRequired': True,
-                    'additionalNativeAndBrowserPreflights': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'REQUIRED',
-                    'nativeLongWindow': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else native['status'],
-                    'pacedHistoryLongWindow': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'REQUIRED',
-                    'additionalCommandRepeats': 'NOT_RUN_AB_ONLY' if profile == 'wait-path-ab-only' else 'REQUIRED'}
+                    'additionalNativePreflights': omission if focused else 'REQUIRED',
+                    'additionalBrowserPreflights': 'WAIT_REPAIR_SMOKE_REQUIRED' if profile == 'ui-wait-mutation-only' else omission if focused else 'REQUIRED',
+                    'nativeLongWindow': omission if focused else native['status'],
+                    'pacedHistoryLongWindow': omission if focused else 'REQUIRED',
+                    'additionalCommandRepeats': omission if focused else 'REQUIRED',
+                    'waitPathComponentAB': 'REQUIRED' if profile == 'wait-path-ab-only' else 'NOT_RUN_NOT_SELECTED',
+                    'uiWaitMutationWindow': 'REQUIRED_ONCE_720S_30_UI_600_IDB' if profile == 'ui-wait-mutation-only' else 'NOT_RUN_NOT_SELECTED'}
           (root / 'observation-scope.json').write_text(json.dumps(result, indent=2) + '\n')
           print(json.dumps(result))
           PYCODE
@@ -188,6 +195,35 @@ jobs:
         with:
           name: enterprise-wait-path-ab-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/enterprise-wait-path-ab
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Selected visible-wait callback and failure-semantic guards
+        id: visible_wait_guards
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.observation_scope.outcome == 'success' && env.ENTERPRISE_OBSERVATION_PROFILE == 'ui-wait-mutation-only' }}
+        run: python -B -m unittest discover -s tests -p test_enterprise_visible_wait.py -v
+      - name: Repaired UI-wait real-browser short qualification
+        id: visible_wait_smoke
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.visible_wait_guards.outcome == 'success' && steps.browser_harness_guards.outcome == 'success' && steps.native_harness_guards.outcome == 'success' }}
+        run: python -B tests/test_enterprise_browser_soak.py --memory-profile hosted-2gib --smoke --duration-seconds 0 --ui-cycles 1 --storage-cycles 10 --native-every 1 --evidence-dir "$RUNNER_TEMP/enterprise-wait-repair-preflight"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'ui-wait-mutation-only' }}
+        with:
+          name: enterprise-wait-repair-preflight-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-wait-repair-preflight
+          retention-days: 7
+          if-no-files-found: warn
+      - name: One fixed twelve-minute UI-wait repair mutation validation
+        # Original 720s workload, 840s watchdog, at most 65s verified cleanup.
+        timeout-minutes: 16
+        if: ${{ !cancelled() && steps.visible_wait_smoke.outcome == 'success' }}
+        run: python -B tests/test_enterprise_browser_soak.py --workload-profile mutation-soak --memory-profile hosted-2gib --duration-seconds 720 --ui-cycles 30 --storage-cycles 600 --native-every 5 --max-wall-seconds 840 --evidence-dir "$RUNNER_TEMP/enterprise-wait-repair-mutation"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() && env.ENTERPRISE_OBSERVATION_PROFILE == 'ui-wait-mutation-only' }}
+        with:
+          name: enterprise-wait-repair-mutation-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/enterprise-wait-repair-mutation
           retention-days: 7
           if-no-files-found: warn
       - name: Native soak harness preflight (not a completed soak)

@@ -111,12 +111,15 @@ def field(page, name):
     return page.locator(f'[data-supply-field="{name}"]')
 
 
-def reveal(locator):
+def reveal(locator, *, visible_wait=None):
     if not locator.is_visible():
         details = locator.locator('xpath=ancestor::details[1]')
         if details.count() and not details.evaluate('(e) => e.open'):
             details.locator('summary').first.click()
-    locator.wait_for(state='visible')
+    if visible_wait is None:
+        locator.wait_for(state='visible')
+    else:
+        visible_wait(locator)
 
 
 def step(page, index):
@@ -544,10 +547,10 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
         assert restored['snapshot']['rows'] == current['snapshot']['rows']
         self.passed(snapshotHash=expected, revision=restored['savedPointer']['revision'], mechanism='PAGE_RELOAD_NATIVE_INDEXEDDB_PUBLIC_REOPEN')
 
-    def download(self, name, filename, page=None, control=None):
+    def download(self, name, filename, page=None, control=None, *, visible_wait=None):
         page = page or self.page
         control = control if control is not None else action(page, name)
-        reveal(control)
+        reveal(control, visible_wait=visible_wait)
         with page.expect_download() as pending:
             control.click()
         destination = self.evidence / filename
@@ -614,22 +617,26 @@ process.stdout.write(X.write(b,{type:'buffer',bookType:'xlsx'}));"""
         }''').dispose()
         return wait_state(page, lambda s: (s.get('savedPointer') or {}).get('id') == pointer_id)
 
-    def public_history(self, page, pointer_id):
+    def public_history(self, page, pointer_id, *, visible_wait=None):
         step(page, 0)
         action(page, 'study-list').click()
         button = page.locator(f'[data-supply-action="study-history"][data-supply-id="{pointer_id}"]')
         button.click()
         versions = page.locator('.sc-versions [data-supply-action="study-version-open"]')
-        versions.first.wait_for()
+        if visible_wait is None:
+            versions.first.wait_for()
+        else:
+            visible_wait(versions.first)
         values = versions.evaluate_all('(es) => es.map(e => e.dataset.supplyId).sort()')
         button.click()
         return values
 
-    def conflict_controls(self, page):
+    def conflict_controls(self, page, *, visible_wait=None):
         recovery = page.locator('.sc-recovery-actions')
-        recovery.wait_for(state='visible')
-        recovery.locator('[data-supply-action="save-as-branch"]').wait_for(state='visible')
-        recovery.locator('[data-supply-action="package-export"]').wait_for(state='visible')
+        wait = visible_wait if visible_wait is not None else lambda locator: locator.wait_for(state='visible')
+        wait(recovery)
+        wait(recovery.locator('[data-supply-action="save-as-branch"]'))
+        wait(recovery.locator('[data-supply-action="package-export"]'))
         # Save-as-branch is rendered only for a revision conflict, not generic errors.
         assert 'REVISION_CONFLICT' in page.locator('.sc-advanced').last.text_content()
         assert page.locator('.sc-message.is-error').is_visible()
