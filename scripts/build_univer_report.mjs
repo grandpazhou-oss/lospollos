@@ -5,6 +5,8 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 const sdk = path.resolve(process.argv[2] || '');
 if (!process.argv[2]) throw new Error('Usage: node scripts/build_univer_report.mjs <installed-univer-sdk>');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,4 +54,8 @@ for(const input of Object.keys(built.metafile.inputs)){
     dependencies.set(dependency.name,{version:dependency.version,license:dependency.license||'NOT_DECLARED',contents:contents.join('\n')});
 }
 await fs.writeFile(path.join(target,'THIRD_PARTY_LICENSES.txt'),[...dependencies].sort(([a],[b])=>a.localeCompare(b)).map(([name,value])=>`${name} ${value.version} — ${value.license}\n${value.contents||'License declaration from package.json; SDK modules inherit the accompanying Univer LICENSE.'}`).join('\n\n----\n\n')+'\n');
-await fs.writeFile(path.join(target,'NOTICE'),'Univer 1.0.3 (Apache-2.0), SDK commit 748661cbe4c4206c8e188fe0b18ea371a6909776.\nLocally built read-only bridge; no Pro, cloud conversion, XLSX or server service.\nThird-party package declarations and license notices: THIRD_PARTY_LICENSES.txt.\n');
+let sdkCommit='UNKNOWN',sdkTrackedChanges='UNKNOWN';
+try{sdkCommit=execFileSync('git',['-C',sdk,'rev-parse','HEAD'],{encoding:'utf8'}).trim();sdkTrackedChanges=execFileSync('git',['-C',sdk,'status','--porcelain','--untracked-files=no'],{encoding:'utf8'}).trim()||'CLEAN';}catch{}
+const sourceDigest=createHash('sha256');
+for(const input of Object.keys(built.metafile.inputs).sort())sourceDigest.update(input).update('\0').update(await fs.readFile(path.resolve(input))).update('\0');
+await fs.writeFile(path.join(target,'NOTICE'),`Univer ${pkg.version} (Apache-2.0).\nActual SDK commit: ${sdkCommit}; tracked source state: ${sdkTrackedChanges}.\nBundled input paths and bytes SHA-256: ${sourceDigest.digest('hex')} (includes bridge and resolved dependency source files).\nLocally built read-only bridge; no Pro, cloud conversion, XLSX or server service.\nThird-party package declarations and license notices: THIRD_PARTY_LICENSES.txt.\n`);

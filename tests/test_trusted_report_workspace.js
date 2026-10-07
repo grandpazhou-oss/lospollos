@@ -23,6 +23,9 @@ for(const c of model.candidates){const e=W.evidence(model,c.id,'outbound',0);ass
 const cells=W.workbookData(W.evidence(model,'PLAN-F','outbound',0)).sheets.evidence.cellData;
 assert.ok(Object.values(cells).flatMap(Object.values).every(c=>!Object.hasOwn(c,'f')));
 assert.ok(Object.values(cells).flatMap(Object.values).some(c=>c.v==='=HYPERLINK("https://invalid.test")'&&c.t===4));
+const X=require('../vendor/xlsx/xlsx.full.min.js');
+const clipboardRow=['safe\t=1+1','safe\n=1+1','=1+1',-2].map(R.csvCell).join('\t');
+const parsed=X.read(clipboardRow,{type:'string',FS:'\t',raw:true});assert.deepEqual(X.utils.sheet_to_json(parsed.Sheets[parsed.SheetNames[0]],{header:1})[0],['safe\t=1+1','safe\n=1+1',"'=1+1",'-2']);
 assert.equal(JSON.stringify({study,snap}),before);
 assert.throws(()=>W.project({study,snapshot:null}),/SUPPLY_SNAPSHOT/);
 const changed=D.createStudy({...study,name:'Changed input'});assert.throws(()=>W.project({study:changed,snapshot:snap}));
@@ -58,4 +61,9 @@ assert.equal(estimate.distanceBasis,'ESTIMATED_ROAD');assert.match(estimate.limi
 const tonnes=projectionFor(D.createStudy({...study,unit:'t',periodDemand:study.periodDemand.map(d=>({...d,unit:'t'}))}),['F']);assert.equal(tonnes.unit,'t');assert.equal(W.evidence(tonnes,'BOUND-F','outbound').rows[0].unit,'t');
 const large=D.createStudy({...study,periodDemand:Array.from({length:201},(_,i)=>({...study.periodDemand[0],demandId:`D-${i}`,quantity:0.01}))});
 const paged=projectionFor(large,['F']);assert.equal(W.evidence(paged,'BOUND-F','outbound',0).rows.length,200);assert.equal(W.evidence(paged,'BOUND-F','outbound',1).rows.length,1);
+assert.ok(W.evidence(model,'PLAN-F','sources').rows.some(r=>r.recordId==='ANALYSIS_CONDITIONS'));
+const incomplete=D.createStudy({studyId:'COMMON-SAMPLE',classification:'SYNTHETIC',nodes:[{nodeId:'A',role:'DC',capacityByPeriod:{P:100}},{nodeId:'B',role:'DC',capacityByPeriod:{P:100}},{nodeId:'X',role:'CUSTOMER'},{nodeId:'Y',role:'CUSTOMER'}],periodDemand:['X','Y'].map(id=>({demandId:id,customerNodeId:id,currentSiteId:'A',period:'P',quantity:10,unit:'m3'})),distanceRows:[['A','X',10],['B','X',5],['B','Y',6]].map(([fromNodeId,toNodeId,distanceKm])=>({fromNodeId,toNodeId,distanceKm,unit:'km',quality:'VERIFIED_ROAD',source:'SYNTHETIC'}))});
+const common=projectionFor(incomplete,['B']);assert.equal(common.focus.outbound.value,5.5);assert.equal(common.summary.outbound.before,10);assert.equal(common.summary.outbound.after,5);assert.equal(common.summary.outbound.changeRate,-0.5);assert.equal(common.summary.outbound.coverage,0.5);
+// Reusable verified fixtures for isolated report-component rendering, separate from the native business journey.
+module.exports={study,snapshot:snap,partial:{study:incomplete,snapshot:common.snapshot}};
 console.log(JSON.stringify({suite:'TRUSTED_REPORT_WORKSPACE',status:'PASS',method:'Real deterministic evaluation and verified snapshots; not native solver/browser evidence'}));

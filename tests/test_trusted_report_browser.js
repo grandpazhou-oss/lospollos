@@ -3,6 +3,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {chromium}=require('playwright');
 const X=require('../vendor/xlsx/xlsx.full.min.js');
+const fixtures=require('./test_trusted_report_workspace.js');
 const evidence=path.resolve(process.argv[2]),base=process.argv[3];
 if(!evidence||!base)throw new Error('Usage: NODE_PATH=<installed-playwright> node tests/test_trusted_report_browser.js <evidence> <isolated-url>');
 fs.mkdirSync(evidence,{recursive:true});
@@ -49,9 +50,13 @@ async function report(scope,s){
   assert.deepEqual(await root.locator('tr[data-report-candidate]:not([data-report-group="REFERENCE"])').evaluateAll(es=>es.map(e=>e.dataset.reportCandidate)),projection.candidates.map(c=>c.id));
   assert.ok((await root.innerText()).includes(projection.conclusion));assert.ok((await root.innerText()).includes(s.study.name));
   for(const c of projection.candidates){
-    const button=root.locator(`tr [data-report-scenario="${c.id}"][data-report-evidence="${detailKey}"]`);await button.focus();await page.keyboard.press('Enter');
-    assert.equal(await root.locator('[data-report-select]').inputValue(),c.id);assert.ok((await root.locator('[data-report-detail-note]').innerText()).includes(hash));
+    for(const key of ['outbound','inbound','volumeKm','cost','capacity','sources']){
+      const button=root.locator(`tr [data-report-scenario="${c.id}"][data-report-evidence="${key}"]`);await button.focus();await page.keyboard.press('Enter');
+      assert.equal(await root.locator('[data-report-select]').inputValue(),c.id);assert.ok((await root.locator('[data-report-detail-note]').innerText()).includes(hash));
+      if(key==='sources')assert.ok((await root.locator('[data-report-detail-table]').innerText()).includes('ANALYSIS_CONDITIONS'));
+    }
   }
+  if(scope==='UPSTREAM_ONLY'){await root.locator('tr [data-report-scenario="OBSERVED_KNOWN_INBOUND"][data-report-evidence="inbound"]').click();assert.equal(await root.locator('[data-report-detail-table] tbody tr').count(),s.snapshot.baseline.inbound.length);}
   await page.screenshot({path:path.join(evidence,scope+'-summary-comparison.png'),fullPage:true});
   assert.equal(results.requests.length,before);assert.equal(JSON.stringify((await state()).snapshot),body);
   const candidate=projection.candidates[0];await root.locator(`tr [data-report-scenario="${candidate.id}"][data-report-evidence="${detailKey}"]`).click();
@@ -64,7 +69,7 @@ async function report(scope,s){
   const canvas=host.locator('canvas').last();await canvas.click({position:{x:100,y:65}});
   await page.keyboard.press(process.platform==='darwin'?'Meta+C':'Control+C');
   const copied=await page.evaluate(()=>navigator.clipboard.readText());assert.ok(copied.includes(candidate.id),'Selection and copy must work in the read-only workbook');
-  await canvas.dblclick({position:{x:100,y:65}});await page.keyboard.type('MODIFIED');await page.keyboard.press('Delete');
+  await canvas.dblclick({position:{x:100,y:65}});await page.keyboard.type('MODIFIED');await page.keyboard.press('Delete');await page.keyboard.press('Control+d');await page.keyboard.press('Control+-');
   await page.evaluate(()=>navigator.clipboard.writeText('PASTE_ATTEMPT'));await page.keyboard.press(process.platform==='darwin'?'Meta+V':'Control+V');await page.waitForTimeout(300);
   assert.deepEqual(await page.evaluate(()=>window.STCTUniverEvidence.read().sheets.evidence.cellData),initial);
   assert.equal(JSON.stringify((await state()).snapshot),body);
@@ -81,8 +86,8 @@ async function report(scope,s){
 (async()=>{
  try{
   browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
-  const context=await browser.newContext({viewport:{width:1440,height:1000},permissions:['clipboard-read','clipboard-write']});page=await context.newPage();page.setDefaultTimeout(20000);
-  page.on('pageerror',e=>results.errors.push(e.message));page.on('request',r=>{if(r.method()==='POST'&&/\/supply-chain.*jobs/.test(r.url()))results.requests.push({url:r.url(),time:Date.now()});});
+  const context=await browser.newContext({viewport:{width:1440,height:1000},permissions:['clipboard-read','clipboard-write']});context.on('page',tab=>tab.on('pageerror',e=>results.errors.push({url:tab.url(),message:e.message})));page=await context.newPage();page.setDefaultTimeout(20000);
+  page.on('request',r=>{if(r.method()==='POST'&&/\/supply-chain.*jobs/.test(r.url()))results.requests.push({url:r.url(),time:Date.now()});});
   await page.goto(base);if(await page.locator('#loginForm .login-btn').isVisible())await page.locator('#loginForm .login-btn').click();await page.locator('.platform-home').waitFor();
   await page.locator('button[data-platform-route="/platform/data"]:visible').first().click();await page.locator('[data-v8-kind]').selectOption('SUPPLY_CHAIN_PERIOD');
   await page.locator('[data-p5-upload]').setInputFiles({name:'synthetic-input.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:input});
@@ -103,6 +108,18 @@ async function report(scope,s){
   }
   const snapshotHash=(await state()).snapshot.snapshotHash;
   const pointerId=(await state()).savedPointer.id;
+  // Component fixture test only: no controller/IndexedDB state injection and no claim of native solving here.
+  const component=await context.newPage();await component.goto(base);if(await component.locator('#loginForm .login-btn').isVisible())await component.locator('#loginForm .login-btn').click();await component.locator('.platform-home').waitFor();
+  await component.evaluate(value=>window.STCTPlatformV19.trustedReport.open(value,'zh'),{study:fixtures.study,snapshot:fixtures.snapshot});
+  assert.deepEqual(await component.locator('.trusted-report tr[data-report-group="RANKED"]').evaluateAll(es=>es.map(e=>e.dataset.reportCandidate)),fixtures.snapshot.decision.rankedScenarioIds);
+  await component.locator('.trusted-report tr [data-report-scenario="PLAN-F"][data-report-evidence="outbound"]').click();
+  assert.ok((await component.locator('[data-report-detail-table]').innerText()).includes('=HYPERLINK'));await component.locator('[data-report-workbook]').click();
+  await component.locator('[data-report-sdk-status]').filter({hasText:'实际只读'}).waitFor();
+  assert.ok(await component.evaluate(()=>Object.values(window.STCTUniverEvidence.read().sheets.evidence.cellData).flatMap(Object.values).some(c=>String(c.v).startsWith('=HYPERLINK')&&c.t===4&&!c.f)));
+  await component.screenshot({path:path.join(evidence,'component-six-candidates-formula-text.png'),fullPage:true});
+  await component.evaluate(value=>window.STCTPlatformV19.trustedReport.open(value,'zh'),fixtures.partial);
+  assert.match(await component.locator('.tr-metrics article').first().innerText(),/10 → 5 km/);assert.match(await component.locator('.tr-metrics article').first().innerText(),/-50%/);assert.match(await component.locator('.tr-metrics article').first().innerText(),/50%/);
+  await component.close();pass('report-component-six-candidates-common-sample',{method:'Verified synthetic fixture supplied to report API only; separate from native business journey'});
   async function reopenInTab(tab){
     await tab.goto(base);if(await tab.locator('#loginForm .login-btn').isVisible())await tab.locator('#loginForm .login-btn').click();
     await tab.locator('button[data-platform-route="/platform/scenarios"]:visible').first().click();
@@ -121,8 +138,12 @@ async function report(scope,s){
   await reopenInTab(late);await late.locator('[data-supply-action="report-open"]').click();await late.locator('.trusted-report tr [data-report-evidence="inbound"]').last().click();await late.locator('[data-report-workbook]').click();await late.keyboard.press('Escape');
   await late.locator('button[data-platform-route="/platform/scenarios"]:visible').first().click();await late.waitForTimeout(1500);
   assert.ok(seen);assert.equal(await late.locator('.trusted-report').count(),0);assert.equal(await late.evaluate(()=>window.STCTUniverEvidence?.read()||null),null);await late.close();pass('late-sdk-after-close-route',{injection:'Local SDK response delayed 1 s; close and navigation use business controls'});
+  const noMap=await page.context().newPage();await noMap.route('**/vendor/maplibre/maplibre-gl.js*',route=>route.abort());
+  await reopenInTab(noMap);assert.equal(await noMap.evaluate(()=>typeof window.maplibregl),'undefined');await noMap.locator('[data-supply-action="report-open"]').click();
+  await noMap.locator('.trusted-report tr [data-report-evidence="sources"]').last().click();assert.ok((await noMap.locator('[data-report-detail-table]').innerText()).includes('ANALYSIS_CONDITIONS'));
+  await noMap.screenshot({path:path.join(evidence,'no-map-report.png'),fullPage:true});await noMap.close();pass('no-map-report',{injection:'Local map renderer request unavailable; saved study reopened through public catalog controls'});
   await step(1);await field('planName').fill('Changed after report');await field('planName').press('Tab');await wait(s=>!s.snapshot);await step(2);assert.equal(await action('report-open').isEnabled(),false);pass('stale-result-report-blocked');
-  results.status='PASS';
+  assert.deepEqual(results.errors,[],'Unexpected page exceptions must not be reported PASS');results.status='PASS';
  }catch(error){results.status='FAIL';results.failure=error.stack;console.error(error);if(page)await page.screenshot({path:path.join(evidence,'failure.png'),fullPage:true}).catch(()=>{});process.exitCode=1;}
  finally{fs.writeFileSync(path.join(evidence,'browser-results.json'),JSON.stringify(results,null,2));if(browser)await browser.close();}
 })();
