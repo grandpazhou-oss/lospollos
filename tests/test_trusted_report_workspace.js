@@ -15,6 +15,7 @@ const snap=R.createSnapshot(study,base,candidates,[],config),before=JSON.stringi
 const model=W.project({study,snapshot:snap,savedPointer:{revision:3}},'zh');
 assert.deepEqual(model.candidates.map(r=>r.id),snap.decision.rankedScenarioIds);
 assert.equal(model.candidates.length,6);
+assert.ok(model.candidates.every(c=>c.capacity==='PASS'),'verified period-capacity PASS must not be labelled missing provenance');
 assert.equal(model.identity.snapshotHash,snap.snapshotHash);
 assert.equal(model.identity.generatedAt,null,'opening a report cannot fabricate a generation date');
 assert.match(model.conclusion,/物量公里|候选/);

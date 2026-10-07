@@ -22,7 +22,7 @@
       sites:(result.selectedSiteIds||(result.selectedSites||[]).map(s=>s.siteId||s.nodeId)).map(id=>nodes.get(id)||id),
       outbound:measure(result.metrics?.outbound),inbound:measure(result.metrics?.inbound),volumeKm:finite(result.metrics?.totalVolumeKm),
       cost:{value:finite(result.metrics?.steadyStateCost??result.metrics?.operatingCost),firstPeriod:finite(result.metrics?.firstPeriodCost)},
-      status:result.status||'来源信息不完整',capacity:result.capacityStatus||((result.capacityByPeriod||[]).some(c=>c.status==='EXCEEDED')?'EXCEEDED':(result.capacityByPeriod||[]).some(c=>c.status==='UNKNOWN')?'UNKNOWN':'来源信息不完整'),
+      status:result.status||'来源信息不完整',capacity:result.capacityStatus||((result.capacityByPeriod||[]).some(c=>c.status==='EXCEEDED')?'EXCEEDED':(result.capacityByPeriod||[]).some(c=>c.status==='UNKNOWN')?'UNKNOWN':result.capacityByPeriod?.length&&result.capacityByPeriod.every(c=>c.status==='PASS')?'PASS':'来源信息不完整'),
       metricValue:finite(entry.metricValue),comparison:entry.row?.comparison||null});
     const references=[row('OBSERVED_BASELINE',snap.baseline,'真实观察现状')];
     if(scope==='FULL_CHAIN'&&snap.planningReference)references.push(row('PLANNING_REFERENCE',snap.planningReference,'同条件规划参照'));
