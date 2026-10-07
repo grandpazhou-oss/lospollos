@@ -804,6 +804,7 @@
         const st3 = state(); if (!st3?.study || !st3?.snapshot) { setMessage(local('请先完成一次分析生成结果快照。', 'Run an analysis first to produce a result snapshot.', 'まず分析を実行してください。')); return; }
         try { globalThis.STCTPlatformV19.supplyChainReportView.open(st3, language, {
           isCurrent: () => state().study?.inputHash === st3.study.inputHash && state().snapshot?.snapshotHash === st3.snapshot.snapshotHash,
+          export: format => action('export-' + format),
           listComparisons: async () => (await controller.listStudies()).filter(pointer => pointer.snapshotHash),
           loadComparison: id => controller.readComparison(id),
           navigate: (target, focusId) => {

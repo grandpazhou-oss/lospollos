@@ -1,0 +1,61 @@
+'use strict';
+const assert = require('node:assert/strict');
+const D = require('../supply-chain-design-v19.js');
+const R = require('../supply-chain-report-v19.js');
+const W = require('../supply-chain-report-workspace-v01.js');
+const nodes = ['A','B','C','D','E','F'].map((id,i)=>({nodeId:id,name:`Synthetic warehouse ${id}`,role:'DC',capacityByPeriod:{P:100}}));
+nodes.push({nodeId:'CUSTOMER',name:'=HYPERLINK("https://invalid.test")',role:'CUSTOMER'});
+const study = D.createStudy({studyId:'REPORT-SYNTHETIC',name:'Synthetic report acceptance',classification:'SYNTHETIC',nodes,
+  periodDemand:[{demandId:'DEMAND',customerNodeId:'CUSTOMER',currentSiteId:'A',period:'P',quantity:10,unit:'m3'}],
+  distanceRows:nodes.filter(n=>n.role==='DC').map((n,i)=>({fromNodeId:n.nodeId,toNodeId:'CUSTOMER',distanceKm:10-i,unit:'km',quality:'VERIFIED_ROAD',source:'SYNTHETIC'}))});
+const config={type:'NETWORK_CANDIDATE',objective:'VOLUME_KM',objectiveScope:'OUTBOUND_ONLY',facilityCounts:[1],distanceBasis:'VERIFIED_ROAD'};
+const base=D.evaluatePortfolio(study,{type:'OBSERVED_BASELINE',distanceBasis:'VERIFIED_ROAD'});
+const candidates=nodes.filter(n=>n.role==='DC').map(n=>D.evaluatePortfolio(study,{...config,scenarioId:`PLAN-${n.nodeId}`,selectedSiteIds:[n.nodeId]},[{demandId:'DEMAND',siteNodeId:n.nodeId}]));
+const snap=R.createSnapshot(study,base,candidates,[],config),before=JSON.stringify({study,snap});
+const model=W.project({study,snapshot:snap,savedPointer:{revision:3}},'zh');
+assert.deepEqual(model.candidates.map(r=>r.id),snap.decision.rankedScenarioIds);
+assert.equal(model.candidates.length,6);
+assert.equal(model.identity.snapshotHash,snap.snapshotHash);
+assert.equal(model.identity.generatedAt,null,'opening a report cannot fabricate a generation date');
+assert.match(model.conclusion,/物量公里|候选/);
+assert.ok(model.candidates.every(r=>r.cost.value===null),'unknown cost must not become zero');
+for(const c of model.candidates){const e=W.evidence(model,c.id,'outbound',0);assert.ok(e.rows.every(r=>r.scenarioId===c.id));assert.equal(e.rows[0].distanceKm,c.outbound.value);assert.equal(e.rows[0].recordId,`OUTBOUND:DEMAND:P:0`);}
+const cells=W.workbookData(W.evidence(model,'PLAN-F','outbound',0)).sheets.evidence.cellData;
+assert.ok(Object.values(cells).flatMap(Object.values).every(c=>!Object.hasOwn(c,'f')));
+assert.ok(Object.values(cells).flatMap(Object.values).some(c=>c.v==='=HYPERLINK("https://invalid.test")'&&c.t===4));
+assert.equal(JSON.stringify({study,snap}),before);
+assert.throws(()=>W.project({study,snapshot:null}),/SUPPLY_SNAPSHOT/);
+const changed=D.createStudy({...study,name:'Changed input'});assert.throws(()=>W.project({study:changed,snapshot:snap}));
+assert.equal(W.evidence(model,'PLAN-F','outbound',99).rows.length,0);
+assert.throws(()=>W.evidence(model,'UNKNOWN','outbound'),/REPORT_SCENARIO_UNKNOWN/);
+const old=structuredClone(snap);delete old.decision;delete old.explanation;delete old.snapshotHash;old.snapshotHash=D.hash(old);
+const oldModel=W.project({study,snapshot:old});assert.equal(oldModel.projection.rankingAvailable,false);assert.ok(oldModel.candidates.every(c=>c.rank===null));
+assert.match(oldModel.conclusion,/未保存正式决策/);
+const zeroStudy=D.createStudy({...study,studyId:'ZERO-COST',nodes:[...study.nodes,{nodeId:'SOURCE',role:'FACTORY'}],observedInbound:[{flowId:'FLOW',fromNodeId:'SOURCE',toNodeId:'A',period:'P',quantity:10,unit:'m3'}],distanceRows:[...study.distanceRows,...['A','F'].map(toNodeId=>({fromNodeId:'SOURCE',toNodeId,distanceKm:2,unit:'km',quality:'VERIFIED_ROAD',source:'SYNTHETIC'}))],rates:['INBOUND_TRANSPORT','OUTBOUND_TRANSPORT','FIXED_OPERATING','HANDLING'].map(kind=>({kind,status:'CONFIRMED_ZERO',amount:0,basis:kind==='FIXED_OPERATING'?'PER_PERIOD':kind==='HANDLING'?'PER_UNIT':'PER_UNIT_KM'})),costApplicability:{inventoryHolding:'NOT_APPLICABLE',transferTransport:'NOT_APPLICABLE'}});
+const zeroBase=D.evaluatePortfolio(zeroStudy,{type:'OBSERVED_BASELINE',distanceBasis:'VERIFIED_ROAD'});
+const zeroResult=D.evaluatePortfolio(zeroStudy,{...config,scenarioId:'ZERO',selectedSiteIds:['F'],sourcePlan:[{sourceNodeId:'SOURCE',siteNodeId:'F',share:1}]},[{demandId:'DEMAND',siteNodeId:'F'}]);
+const zero=W.project({study:zeroStudy,snapshot:R.createSnapshot(zeroStudy,zeroBase,[zeroResult],[],config)});
+assert.equal(zero.candidates[0].cost.value,0);assert.equal(zero.candidates[0].comparison.steadyStateImprovementRate,null);
+assert.ok(W.evidence(zero,'ZERO','cost').rows.some(r=>r.status==='CONFIRMED_ZERO'));
+const book=W.workbookData(W.evidence(model,'PLAN-F','outbound'),model);assert.equal(book.sheetOrder.length,2);assert.equal(book.sheets.comparison.cellData[1][0].v,'OBSERVED_BASELINE');
+function projectionFor(current,sites){
+  const before=D.evaluatePortfolio(current,{type:'OBSERVED_BASELINE',distanceBasis:config.distanceBasis});
+  const plans=sites.map(id=>D.evaluatePortfolio(current,{...config,scenarioId:`BOUND-${id}`,selectedSiteIds:[id]},current.periodDemand.map(d=>({demandId:d.demandId,siteNodeId:id}))));
+  return W.project({study:current,snapshot:R.createSnapshot(current,before,plans,[],config)});
+}
+const small=projectionFor(study,['B']);assert.equal(small.candidates.length,1);assert.match(small.limits.join(' '),/实际保存 1 个候选/);
+const none=projectionFor(study,[]);assert.equal(none.focus,null);assert.equal(none.candidates.length,0);
+const exceeded=D.createStudy({...study,nodes:study.nodes.map(n=>n.role==='DC'?{...n,capacityByPeriod:{P:1}}:n)});
+const infeasible=projectionFor(exceeded,['B']);assert.equal(infeasible.candidates[0].rank,null);assert.equal(infeasible.candidates[0].group,'OTHER');assert.equal(infeasible.candidates[0].capacity,'EXCEEDED');
+const mixed=projectionFor(D.createStudy({...study,nodes:study.nodes.map(n=>n.nodeId==='B'?{...n,capacityByPeriod:{P:1}}:n)}),['B','F']);
+assert.equal(mixed.candidates.find(c=>c.id==='BOUND-B').rank,null);assert.equal(mixed.candidates[0].id,'BOUND-F');
+const same=D.createStudy({...study,distanceRows:study.distanceRows.map(r=>({...r,distanceKm:5}))});
+const tied=projectionFor(same,['B','F']);assert.ok(tied.candidates.every(c=>c.tied&&c.rank===1));assert.match(tied.conclusion,/并列/);
+const estimated=D.createStudy({...study,distanceRows:study.distanceRows.map(r=>({...r,quality:'ESTIMATED_ROAD'}))});
+const estimateConfig={...config,distanceBasis:'ESTIMATED_ROAD'};
+const estimate=W.project({study:estimated,snapshot:R.createSnapshot(estimated,D.evaluatePortfolio(estimated,{type:'OBSERVED_BASELINE',distanceBasis:'ESTIMATED_ROAD'}),[D.evaluatePortfolio(estimated,{...estimateConfig,scenarioId:'ESTIMATE',selectedSiteIds:['F']},[{demandId:'DEMAND',siteNodeId:'F'}])],[],estimateConfig)});
+assert.equal(estimate.distanceBasis,'ESTIMATED_ROAD');assert.match(estimate.limits.join(' '),/估算道路/);
+const tonnes=projectionFor(D.createStudy({...study,unit:'t',periodDemand:study.periodDemand.map(d=>({...d,unit:'t'}))}),['F']);assert.equal(tonnes.unit,'t');assert.equal(W.evidence(tonnes,'BOUND-F','outbound').rows[0].unit,'t');
+const large=D.createStudy({...study,periodDemand:Array.from({length:201},(_,i)=>({...study.periodDemand[0],demandId:`D-${i}`,quantity:0.01}))});
+const paged=projectionFor(large,['F']);assert.equal(W.evidence(paged,'BOUND-F','outbound',0).rows.length,200);assert.equal(W.evidence(paged,'BOUND-F','outbound',1).rows.length,1);
+console.log(JSON.stringify({suite:'TRUSTED_REPORT_WORKSPACE',status:'PASS',method:'Real deterministic evaluation and verified snapshots; not native solver/browser evidence'}));

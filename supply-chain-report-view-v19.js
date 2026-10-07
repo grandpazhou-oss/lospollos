@@ -984,6 +984,7 @@
 /*==NEWENGINE2==*/
   let overlay = null, evidenceEl = null, keyHandler = null, lastFocus = null;
   function closeOverlay() {
+    globalThis.STCTPlatformV19?.trustedReport?.close();
     if (keyHandler) { globalThis.removeEventListener("keydown", keyHandler); keyHandler = null; }
     if (overlay) { overlay.remove(); overlay = null; }
     if (evidenceEl) { evidenceEl.remove(); evidenceEl = null; }
@@ -991,6 +992,7 @@
     lastFocus = null;
   }
   function open(viewState, locale = "zh", actions = {}) {
+    if (globalThis.STCTPlatformV19?.trustedReport) return globalThis.STCTPlatformV19.trustedReport.open(viewState, locale, actions);
     const model = buildModel(viewState, locale);
     const opener = document.activeElement;
     closeOverlay();
