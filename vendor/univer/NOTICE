@@ -1,0 +1,5 @@
+Univer 1.0.3 (Apache-2.0).
+Actual SDK commit: 748661cbe4c4206c8e188fe0b18ea371a6909776; tracked source state: CLEAN.
+Bundled input paths and bytes SHA-256: e363a944f7cd44e500cd6f9bde475a0d9a6211f321f4f377807fc8459ed899a9 (includes bridge and resolved dependency source files).
+Locally built read-only bridge; no Pro, cloud conversion, XLSX or server service.
+Third-party package declarations and license notices: THIRD_PARTY_LICENSES.txt.
