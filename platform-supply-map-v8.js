@@ -298,7 +298,8 @@
       }
       for (const total of totals.values()) maximum = Math.max(maximum, total);
     }
-    const flowScale = { maximum, unit: study.unit || '', scope: 'ALL_PERIODS_BOTH_SCENARIOS', transform: 'SQRT', minWidth: 1.5, maxWidth: 7 };
+    const outboundTotalMaximum = Math.max(...[before, after].map(legs => legs.outbound.reduce((sum, row) => sum + (Number.isFinite(row.quantity) && row.quantity > 0 ? row.quantity : 0), 0)));
+    const flowScale = { maximum, outboundTotalMaximum, unit: study.unit || '', scope: 'ALL_PERIODS_BOTH_SCENARIOS', transform: 'SQRT', minWidth: 1.5, maxWidth: 7 };
     const mode = ['REFERENCE', 'CANDIDATE', 'BOTH'].includes(options.mode) ? options.mode : 'BOTH';
     const leg = ['INBOUND', 'OUTBOUND', 'TRANSFER', 'BOTH'].includes(options.leg) ? options.leg : 'BOTH';
     const period = study.periods?.includes(options.period) ? options.period : 'ALL';
@@ -395,7 +396,23 @@
         layers.push({ id: `${name}-${kind}`, label: `${title} · ${label}` });
       }
     }
-    return { owner: 'SUPPLY', features, entities, layers, relations, receiverComparisons: receiverComparisons(allRelations), flowScale, warehouseLegend: warehouseLegend(features, styles),
+    const periodLoads = [];
+    for (const [side, legs] of [['reference', before], ['candidate', after]]) {
+      const loads = new Map();
+      for (const kind of ['inbound', 'outbound', 'transfer']) for (const row of legs[kind]) {
+        if (!Number.isFinite(row.quantity) || row.quantity <= 0) continue;
+        const ids = kind === 'inbound' ? [row.toNodeId] : kind === 'outbound' ? [row.fromNodeId] : [row.fromNodeId, row.toNodeId];
+        for (const warehouseId of new Set(ids)) {
+          if (role(nodes.get(warehouseId) || {}) !== 'facility') continue;
+          const key = JSON.stringify([warehouseId, kind, row.period]);
+          const load = loads.get(key) || { warehouseId, kind, period: row.period, quantity: 0, side };
+          load.quantity += row.quantity;
+          loads.set(key, load);
+        }
+      }
+      periodLoads.push(...loads.values());
+    }
+    return { owner: 'SUPPLY', features, entities, layers, relations, periodLoads, receiverComparisons: receiverComparisons(allRelations), flowScale, warehouseLegend: warehouseLegend(features, styles),
       coverageRows, relationContext: { scenarioName: selected?.scenarioName || selected?.name || scenarioId || c.noResult,
         reference: referenceLabel, referenceScenarioId:referenceCandidate?.scenarioId||'', periodLabel: period === 'ALL' ? (locale === 'en' ? 'All periods' : locale === 'ja' ? '全期間' : '全部期间') : period,
         distanceLabel: distanceLabel(current?.distanceBasis || study.coordinateUse, locale), mode, period, periods: [...(study.periods || [])],
