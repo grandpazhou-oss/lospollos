@@ -88,3 +88,7 @@ The incremental validation candidate is based on hardening commit
 `5a8078ef0547941ded9aadd53fd3d6cf3ee4faeb`, not `main`. See
 [the validation record](docs/ENTERPRISE_VALIDATION_20261006.md) for newly reproduced
 defects, test commands and evidence boundaries. It remains a Draft candidate.
+
+## Map / Excel controlled UI increment — 2026-10-08
+
+`codex/map-excel-closure-20261008` inherits the validated enterprise branch and the snapshot-bound report workspace, and adds optional advanced MapLibre presentation plus native XLSX calculation details. See [the scoped handoff and acceptance](docs/MAP_EXCEL_CLOSURE_20261008.md). It does not change solver semantics, runtime admission or native Windows acceptance. Client inputs/results and raw local evidence are not part of this push. Existing main, frozen handoff, protected services and unresolved enterprise/Windows/OSRM/human/soak boundaries remain separate.
