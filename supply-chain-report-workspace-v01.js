@@ -84,6 +84,39 @@
     }
     return data;
   }
+  function toExcel(state,X,locale='zh'){
+    const model=project(state,locale); // Same independent verification and ranking as the report.
+    if(!X?.utils?.aoa_to_sheet||!X.write)throw Object.assign(new Error('SUPPLY_EXCEL_RUNTIME_UNAVAILABLE'),{code:'SUPPLY_EXCEL_RUNTIME_UNAVAILABLE'});
+    const {study}=model,nodes=new Map(study.nodes.map(n=>[n.nodeId,n]));
+    const names=({zh:['说明','方案比较','新方案匹配明细','参照匹配明细'],en:['Notes','Scenario comparison','Candidate assignments','Reference assignments'],ja:['説明','計画比較','候補割当明細','参照割当明細']})[locale]||['说明','方案比较','新方案匹配明细','参照匹配明细'];
+    const comparison=[['类别 Group','排名 Rank','方案ID Scenario ID','方案名称 Scenario','仓网 Warehouses','重点候选 Focus','排序指标 Ranking metric','目标值 Objective value','配送加权距离 Outbound km','入库加权距离 Inbound km','物量公里 Volume km','物量单位 Unit','稳态费用 Steady cost','首期费用 First-period cost','币种 Currency','求解状态 Status','能力状态 Capacity','分组原因 Reason'],
+      ...[...model.references,...model.candidates].map(c=>[c.group,c.rank,c.id,c.label,c.sites.join(' / '),c.id===model.focusId,model.projection.rankingMetric,c.metricValue,c.outbound.value,c.inbound.value,c.volumeKm,model.unit,c.cost.value,c.cost.firstPeriod,model.currency,c.status,c.capacity,c.reason])];
+    const cols=['方案ID Scenario ID','方案名称 Scenario','排名 Rank','运输段 Leg','期间 Period','需求ID Demand ID','货流ID Flow ID','起点ID From ID','起点名称 From name','起点角色 From role','起点地址 From address','终点ID To ID','终点名称 To name','终点角色 To role','终点地址 To address','物量 Quantity','单位 Unit','距离 Distance km','物量公里 Volume km','费用 Cost','币种 Currency','费率状态 Rate status','计费口径 Rate basis','费率 Rate amount','距离口径 Distance basis','距离质量 Quality','距离来源 Distance source','距离时间 Observed at','距离策略 Strategy','来源文件 File','来源表 Sheet','来源行 Row','分配依据 Assignment source','研究ID Study ID','输入哈希 Input hash','快照哈希 Snapshot hash'];
+    const D=typeof module==='object'&&module.exports?require('./supply-chain-design-v19.js'):globalThis.STCTPlatformV19.supplyChainDesign;
+    function assignments(candidates){
+      const rows=[cols];
+      for(const candidate of candidates)for(const kind of ['inbound','outbound','transfer'])for(const leg of candidate.result[kind]||[]){
+        const from=nodes.get(leg.fromNodeId),to=nodes.get(leg.toNodeId),basis=leg.distanceBasis||candidate.result.distanceBasis||model.distanceBasis;
+        const resolved=D.resolveDistance(study,D.distanceIndex(study,basis),leg.fromNodeId,leg.toNodeId,basis);
+        // Provenance only: never replace the verified ledger distance with a new calculation.
+        const distance=resolved?.distanceKm===leg.distanceKm?resolved:null;
+        const source=leg.source&&typeof leg.source==='object'?leg.source:null;
+        rows.push([candidate.id,candidate.label,candidate.rank,leg.kind||kind.toUpperCase(),leg.period,leg.demandId,leg.flowId,leg.fromNodeId,from?.name||leg.fromName||leg.fromNodeId,from?.role,from?.address,leg.toNodeId,to?.name||leg.toName||leg.toNodeId,to?.role,to?.address,leg.quantity,leg.unit||model.unit,leg.distanceKm,leg.volumeKm,leg.cost,model.currency,leg.rateStatus,leg.rateBasis,leg.rateAmount,basis,leg.distanceQuality||distance?.quality,leg.distanceSource||distance?.source,leg.distanceTimestamp||distance?.observedAt,distance?.strategy,source?.fileName,source?.sheet,source?.rowNumber,typeof leg.source==='string'?leg.source:null,model.identity.studyId,model.identity.inputHash,model.identity.snapshotHash]);
+      }
+      return rows;
+    }
+    const notes=[['字段 Field','值 Value'],...Object.entries(model.identity).map(([k,v])=>[k,v&&typeof v==='object'?JSON.stringify(v):v]),['analysisScope',model.scope],['focusScenarioId',model.focusId],['conclusion',model.conclusion],['ranking',model.rankingNote],['distanceBasis',model.distanceBasis],['periods',model.periods.join(' / ')],['unit',model.unit],['currency',model.currency],['reading','新方案匹配明细包含全部已保存候选，按报告分组与排名排列；参照明细单列，不混入候选编号。'],['precision','数值显示一位小数，单元格保留完整精度；ID及期间保存为文本。空白表示未知或不适用，不能当作零。'],['boundary','业务匹配关系不是道路路线；物量公里不是车公里。地理距离不能称为真实道路或SLA。'],...model.limits.map(v=>['limit',v])];
+    const book=X.utils.book_new();
+    for(const [i,rows]of [notes,comparison,assignments(model.candidates),assignments(model.references)].entries()){
+      if(rows.length>1048576||rows.some(row=>row.some(v=>typeof v==='string'&&v.length>32767)))throw Object.assign(new Error('SUPPLY_EXCEL_LIMIT_EXCEEDED'),{code:'SUPPLY_EXCEL_LIMIT_EXCEEDED'});
+      const sheet=X.utils.aoa_to_sheet(rows);
+      for(const [key,cell]of Object.entries(sheet))if(!key.startsWith('!')&&cell.t==='n')cell.z=Number.isInteger(cell.v)?'0':'0.0';
+      sheet['!cols']=rows[0].map((_,j)=>({wch:i===0&&j===1?80:22}));
+      if(i>0)sheet['!autofilter']={ref:sheet['!ref']};
+      X.utils.book_append_sheet(book,sheet,names[i]);
+    }
+    return new Uint8Array(X.write(book,{bookType:'xlsx',type:'array',compression:true}));
+  }
   let active=null,sdkPromise=null;
   function loadSdk(){
     if(globalThis.STCTUniverEvidence)return Promise.resolve(globalThis.STCTUniverEvidence);
@@ -144,5 +177,5 @@
     active={dispose(){if(!alive)return;alive=false;disposeBook();clearInterval(identityWatch);root.removeEventListener('click',click);root.removeEventListener('change',change);root.removeEventListener('keydown',keydown);globalThis.removeEventListener('hashchange',route);root.remove();active=null;if(opener?.isConnected)opener.focus();}};
     return model;
   }
-  return Object.freeze({project,evidence,workbookData,open,close,PAGE_SIZE});
+  return Object.freeze({project,evidence,workbookData,toExcel,open,close,PAGE_SIZE});
 });
